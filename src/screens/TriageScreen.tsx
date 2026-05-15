@@ -59,21 +59,32 @@ export default function TriageScreen({ navigation }: Props) {
 
     if (result) {
       const responseText = result.classification;
+      // Show critical health alert if any
+      if (result.followUp && result.followUp.includes('🚨')) {
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 1).toString(),
+          text: result.followUp,
+          isUser: false,
+          timestamp: Date.now(),
+        }]);
+      }
       // Build tool execution badges
       let badges = '';
       if (result.reasoning && result.reasoning.includes('✓')) {
         const parts = result.reasoning.split(' | ');
         const badgeTexts = parts.map((t: string) => {
-          if (t.includes('save_medication')) return '💊 Saved';
+          if (t.includes('save_vital')) return '❤️ Vital saved';
+          if (t.includes('save_medication')) return '💊 Med saved';
           if (t.includes('schedule_reminder')) return '⏰ Reminder set';
           if (t.includes('save_condition')) return '🏥 Recorded';
-          if (t.includes('get_active')) return '📋 Retrieved';
+          if (t.includes('save_lab')) return '🧪 Lab saved';
+          if (t.includes('log_adherence')) return '✅ Logged';
           return '';
         }).filter(Boolean);
         if (badgeTexts.length > 0) badges = '\n\n' + badgeTexts.join('  •  ');
       }
       setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(), text: responseText + badges, isUser: false, timestamp: Date.now(),
+        id: (Date.now() + 2).toString(), text: responseText + badges, isUser: false, timestamp: Date.now(),
       }]);
       speakMalayalam(responseText);
     } else if (error) {

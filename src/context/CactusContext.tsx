@@ -286,14 +286,17 @@ export function CactusProvider({ children }: { children: React.ReactNode }) {
         onToken: (token: string) => { setCompletion(prev => prev + token); },
       });
 
-      const finalText = result.response || agentResult.directResponse || 'ശരി, ചെയ്തു.';
+      const finalText = result.response || 'ശരി, ചെയ്തു.';
       const triageResult = parseResponse(finalText);
       
-      // Add tool execution info to the result
+      // Add tool execution info and alert
       if (agentResult.toolsExecuted.length > 0) {
         triageResult.reasoning = agentResult.toolsExecuted
           .map(t => `${t.tool}: ${t.success ? '✓' : '✗'} ${t.message || ''}`)
           .join(' | ');
+      }
+      if (agentResult.alert) {
+        triageResult.followUp = agentResult.alert;
       }
 
       setLastResult(triageResult);

@@ -1,137 +1,217 @@
 /**
- * AgentEngine — The real backend logic.
- * 
- * Architecture:
- * 1. User input → IntentParser (deterministic, fast)
- * 2. Based on intent → execute database operations
- * 3. Build context from DB results
- * 4. Pass context + user input to Gemma 4 for natural response generation
- * 
- * This separates "doing things" (deterministic) from "talking" (LLM).
- * The LLM never needs to call tools — it just generates the response.
+ * AgentEngine — Executes intents deterministically, builds context for LLM.
  */
 
-import { parseIntent, generateTTSMessage, Intent, MedicationData } from './IntentParser';
-import { executeAgentTool } from '../tools/agentTools';
+import { parseIntent, generateTTSMessage, getVitalAlert, Intent, MedicationData } from './IntentParser';
+import { database, Vital, Medication, Condition, Reminder, LabResult, AdherenceLog } from '../db';
+import { Q } from '@nozbe/watermelondb';
 
 export interface AgentResult {
   intent: Intent;
   toolsExecuted: Array<{ tool: string; success: boolean; message?: string }>;
   contextForLLM: string;
-  directResponse?: string; // If we can respond without LLM
+  alert?: string; // Critical health alert to show prominently
 }
 
 export async function runAgent(userInput: string, patientId: string = 'default'): Promise<AgentResult> {
   const intent = parseIntent(userInput);
   const toolsExecuted: Array<{ tool: string; success: boolean; message?: string }> = [];
   let contextForLLM = '';
-  let directResponse: string | undefined;
+  let alert: string | undefined;
 
-  switch (intent.type) {
-    case 'add_medication': {
-      const med = intent.data;
-      const today = new Date().toISOString().split('T')[0];
-      
-      // 1. Save medication
-      const saveResult = await executeAgentTool('save_medication', {
-        patient_id: patientId,
-        medication_name: med.name,
-        dosage: med.dosage,
-        frequency: med.frequency,
-        start_date: today,
-        end_date: med.duration ? calculateEndDate(today, med.duration) : '',
-        notes: med.notes,
-      });
-      toolsExecuted.push({ tool: 'save_medication', success: saveResult.success, message: saveResult.message_ml });
+  try {
+    switch (intent.type) {
+      case 'add_vital': {
+        const v = intent.data;
+        await database.write(async () => {
+          await database.get<Vital>('vitals').create((r: any) => {
+            r.patientId = patientId;
+            r.vitalType = v.type;
+            r.valuePrimary = v.primary;
+            r.valueSecondary = v.secondary;
+            r.unit = v.unit;
+            r.context = v.context;
+            r.notes = '';
+            r.recordedAt = Date.now();
+          });
+        });
+        toolsExecuted.push({ tool: 'save_vital', success: true, message: `${v.type}: ${v.primary}${v.secondary ? '/' + v.secondary : ''} ${v.unit}` });
 
-      // 2. Set reminder automatically
-      const ttsMsg = generateTTSMessage(med.name, med.dosage);
-      const reminderResult = await executeAgentTool('schedule_reminder', {
-        patient_id: patientId,
-        medication: med.name,
-        dosage: med.dosage,
-        time_slots: JSON.stringify(med.times),
-        start_date: today,
-        end_date: med.duration ? calculateEndDate(today, med.duration) : '',
-        tts_message: ttsMsg,
-      });
-      toolsExecuted.push({ tool: 'schedule_reminder', success: reminderResult.success, message: reminderResult.message_ml });
+        // Check for critical alerts
+        alert = getVitalAlert(v.type, v.primary, v.secondary) || undefined;
 
-      contextForLLM = `User told about medication: ${med.name} ${med.dosage} ${med.frequency} ${med.duration}. I saved it and set reminder at times ${med.times.join(', ')}. Notes: ${med.notes || 'none'}. Tell the user in nadan Malayalam that everything is saved and reminder is set.`;
-      break;
-    }
-
-    case 'add_condition': {
-      const cond = intent.data;
-      const saveResult = await executeAgentTool('save_condition', {
-        patient_id: patientId,
-        condition_name: cond.name,
-        severity: cond.severity,
-        status: 'active',
-      });
-      toolsExecuted.push({ tool: 'save_condition', success: saveResult.success, message: saveResult.message_ml });
-
-      contextForLLM = `User mentioned they have ${cond.name} (${cond.severity}). I recorded it. Ask follow-up questions about when diagnosed, current treatment, and any symptoms. Respond in nadan Malayalam.`;
-      break;
-    }
-
-    case 'set_reminder': {
-      // Already handled in add_medication, but if user explicitly asks
-      contextForLLM = `User wants to set a reminder. Ask them: which medication, what time, and for how many days. Respond in nadan Malayalam.`;
-      break;
-    }
-
-    case 'query_medications': {
-      const result = await executeAgentTool('get_active_medications', { patient_id: patientId });
-      toolsExecuted.push({ tool: 'get_active_medications', success: result.success });
-
-      if (result.medications && result.medications.length > 0) {
-        const medList = result.medications.map((m: any) => `${m.name} ${m.dosage} (${m.frequency})`).join(', ');
-        contextForLLM = `Patient's active medications: ${medList}. Tell them in nadan Malayalam what they're taking.`;
-      } else {
-        contextForLLM = `Patient has no medications recorded. Tell them in nadan Malayalam.`;
+        const typeLabel = { bp: 'BP', sugar: 'Sugar', spo2: 'SpO2', temperature: 'Temperature', heart_rate: 'Heart Rate', weight: 'Weight', pain: 'Pain' }[v.type] || v.type;
+        const valueStr = v.secondary ? `${v.primary}/${v.secondary}` : `${v.primary}`;
+        contextForLLM = `Patient recorded ${typeLabel}: ${valueStr} ${v.unit}${v.context ? ' (' + v.context + ')' : ''}. ${alert ? 'ALERT: ' + alert : 'Value recorded successfully.'}. Respond in nadan Malayalam — acknowledge the reading, mention if normal/abnormal, give brief advice.`;
+        break;
       }
-      break;
-    }
 
-    case 'query_conditions': {
-      const result = await executeAgentTool('get_conditions', { patient_id: patientId });
-      toolsExecuted.push({ tool: 'get_conditions', success: result.success });
+      case 'add_medication': {
+        const med = intent.data;
+        const today = new Date().toISOString().split('T')[0];
+        const endDate = med.duration ? calculateEndDate(today, med.duration) : '';
 
-      if (result.conditions && result.conditions.length > 0) {
-        const condList = result.conditions.map((c: any) => `${c.name} (${c.status})`).join(', ');
-        contextForLLM = `Patient's conditions: ${condList}. Summarize in nadan Malayalam.`;
-      } else {
-        contextForLLM = `No conditions recorded. Tell them in nadan Malayalam.`;
+        await database.write(async () => {
+          await database.get<Medication>('medications').create((r: any) => {
+            r.patientId = patientId;
+            r.name = med.name;
+            r.dosage = med.dosage;
+            r.frequency = med.frequency;
+            r.route = 'oral';
+            r.prescribedDate = today;
+            r.endDate = endDate;
+            r.prescriber = '';
+            r.reason = '';
+            r.notes = med.notes;
+            r.isActive = true;
+            r.createdAt = Date.now();
+          });
+
+          // Auto-create reminder
+          await database.get<Reminder>('reminders').create((r: any) => {
+            r.reminderId = `rem_${Date.now()}`;
+            r.patientId = patientId;
+            r.reminderType = 'medication';
+            r.medication = med.name;
+            r.dosage = med.dosage;
+            r.timeSlots = JSON.stringify(med.times);
+            r.startDate = today;
+            r.endDate = endDate;
+            r.ttsMessage = generateTTSMessage(med.name, med.dosage);
+            r.isActive = true;
+            r.createdAt = Date.now();
+          });
+        });
+
+        toolsExecuted.push({ tool: 'save_medication', success: true, message: `${med.name} ${med.dosage}` });
+        toolsExecuted.push({ tool: 'schedule_reminder', success: true, message: med.times.join(', ') });
+
+        contextForLLM = `Saved medication: ${med.name} ${med.dosage} ${med.frequency}${med.duration ? ' for ' + med.duration : ''}. Reminder set at ${med.times.join(', ')}. ${med.notes ? 'Note: ' + med.notes : ''}. Confirm to user in nadan Malayalam.`;
+        break;
       }
-      break;
-    }
 
-    case 'query_reminders': {
-      const result = await executeAgentTool('get_active_reminders', { patient_id: patientId });
-      toolsExecuted.push({ tool: 'get_active_reminders', success: result.success });
+      case 'add_condition': {
+        const cond = intent.data;
+        await database.write(async () => {
+          await database.get<Condition>('conditions').create((r: any) => {
+            r.patientId = patientId;
+            r.conditionName = cond.name;
+            r.icdCode = cond.icdCode;
+            r.diagnosedDate = new Date().toISOString().split('T')[0];
+            r.severity = cond.severity;
+            r.status = 'active';
+            r.treatingDoctor = '';
+            r.notes = '';
+            r.createdAt = Date.now();
+          });
+        });
+        toolsExecuted.push({ tool: 'save_condition', success: true, message: cond.name });
 
-      if (result.reminders && result.reminders.length > 0) {
-        const remList = result.reminders.map((r: any) => `${r.medication} ${r.dosage} at ${r.times}`).join(', ');
-        contextForLLM = `Active reminders: ${remList}. Tell them in nadan Malayalam.`;
-      } else {
-        contextForLLM = `No active reminders. Tell them in nadan Malayalam.`;
+        contextForLLM = `Recorded condition: ${cond.name} (${cond.severity}, ICD: ${cond.icdCode}). Ask follow-up: when diagnosed, current treatment, any recent tests. Respond in nadan Malayalam.`;
+        break;
       }
-      break;
-    }
 
-    case 'symptom_report': {
-      contextForLLM = `Patient reports symptoms: "${userInput}". Respond as a nadan Malayalam village doctor — ask clarifying questions, give immediate advice, and suggest when to go to hospital. Be brief and direct.`;
-      break;
-    }
+      case 'add_lab_result': {
+        const lab = intent.data;
+        const isAbnormal = lab.value < lab.refLow || lab.value > lab.refHigh;
 
-    case 'general_chat': {
-      contextForLLM = `User said: "${userInput}". Respond naturally in nadan Malayalam as a friendly health assistant. Be brief.`;
-      break;
+        await database.write(async () => {
+          await database.get<LabResult>('lab_results').create((r: any) => {
+            r.patientId = patientId;
+            r.testName = lab.testName;
+            r.value = lab.value;
+            r.unit = lab.unit;
+            r.referenceLow = lab.refLow;
+            r.referenceHigh = lab.refHigh;
+            r.isAbnormal = isAbnormal;
+            r.labName = '';
+            r.testDate = new Date().toISOString().split('T')[0];
+            r.notes = '';
+            r.createdAt = Date.now();
+          });
+        });
+        toolsExecuted.push({ tool: 'save_lab_result', success: true, message: `${lab.testName}: ${lab.value} ${lab.unit}` });
+
+        contextForLLM = `Lab result recorded: ${lab.testName} = ${lab.value} ${lab.unit} (normal range: ${lab.refLow}-${lab.refHigh}). ${isAbnormal ? 'ABNORMAL — outside normal range.' : 'Within normal range.'} Explain to user in nadan Malayalam what this means.`;
+        break;
+      }
+
+      case 'mark_taken': {
+        await database.write(async () => {
+          await database.get<AdherenceLog>('adherence_log').create((r: any) => {
+            r.patientId = patientId;
+            r.medicationName = intent.medication;
+            r.scheduledTime = '';
+            r.takenAt = Date.now();
+            r.status = 'taken';
+            r.date = new Date().toISOString().split('T')[0];
+          });
+        });
+        toolsExecuted.push({ tool: 'log_adherence', success: true, message: intent.medication });
+        contextForLLM = `Patient confirmed taking ${intent.medication}. Acknowledge in nadan Malayalam, encourage them.`;
+        break;
+      }
+
+      case 'query_medications': {
+        const meds = await database.get<Medication>('medications').query(Q.where('patient_id', patientId), Q.where('is_active', true)).fetch();
+        const medList = meds.map(m => `${m.name} ${m.dosage} (${m.frequency})`).join(', ');
+        contextForLLM = meds.length > 0
+          ? `Patient's active medications: ${medList}. List them in nadan Malayalam.`
+          : `No medications recorded. Tell them in nadan Malayalam.`;
+        break;
+      }
+
+      case 'query_conditions': {
+        const conds = await database.get<Condition>('conditions').query(Q.where('patient_id', patientId)).fetch();
+        const condList = conds.map(c => `${c.conditionName} (${c.status})`).join(', ');
+        contextForLLM = conds.length > 0
+          ? `Patient's conditions: ${condList}. Summarize in nadan Malayalam.`
+          : `No conditions recorded. Tell them in nadan Malayalam.`;
+        break;
+      }
+
+      case 'query_vitals': {
+        const vitals = await database.get<Vital>('vitals').query(
+          Q.where('patient_id', patientId),
+          Q.sortBy('recorded_at', Q.desc),
+          Q.take(5),
+        ).fetch();
+        const vitalList = vitals.map(v => {
+          const val = v.valueSecondary ? `${v.valuePrimary}/${v.valueSecondary}` : `${v.valuePrimary}`;
+          return `${v.vitalType}: ${val} ${v.unit} (${new Date(v.recordedAt).toLocaleDateString()})`;
+        }).join(', ');
+        contextForLLM = vitals.length > 0
+          ? `Recent vitals: ${vitalList}. Summarize trends in nadan Malayalam.`
+          : `No vitals recorded yet. Tell them in nadan Malayalam.`;
+        break;
+      }
+
+      case 'query_reminders': {
+        const rems = await database.get<Reminder>('reminders').query(Q.where('patient_id', patientId), Q.where('is_active', true)).fetch();
+        const remList = rems.map(r => `${r.medication} ${r.dosage} at ${r.timeSlots}`).join(', ');
+        contextForLLM = rems.length > 0
+          ? `Active reminders: ${remList}. Tell them in nadan Malayalam.`
+          : `No active reminders. Tell them in nadan Malayalam.`;
+        break;
+      }
+
+      case 'symptom_report': {
+        contextForLLM = `Patient reports: "${userInput}". Respond as nadan Malayalam village doctor — ask 1-2 clarifying questions, give immediate advice, say when to go to hospital. Be brief and direct.`;
+        break;
+      }
+
+      case 'general_chat':
+      default: {
+        contextForLLM = `User said: "${userInput}". Respond naturally in nadan Malayalam as a friendly health companion. Be brief, warm, helpful.`;
+        break;
+      }
     }
+  } catch (e: any) {
+    toolsExecuted.push({ tool: 'error', success: false, message: e.message });
+    contextForLLM = `Error occurred: ${e.message}. Apologize in nadan Malayalam and ask user to try again.`;
   }
 
-  return { intent, toolsExecuted, contextForLLM, directResponse };
+  return { intent, toolsExecuted, contextForLLM, alert };
 }
 
 function calculateEndDate(startDate: string, duration: string): string {

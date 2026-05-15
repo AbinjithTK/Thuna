@@ -1,17 +1,17 @@
 import { Database } from '@nozbe/watermelondb';
 import SQLiteAdapter from '@nozbe/watermelondb/adapters/sqlite';
 import { ehrSchema } from './schema';
-import { EhrRecord, Patient, Reminder, Medication, Condition } from './models';
+import { Patient, Vital, Medication, Condition, Reminder, LabResult, AdherenceLog, EhrRecord } from './models';
 
 const adapter = new SQLiteAdapter({
   schema: ehrSchema,
-  dbName: 'mededge_ehr',
+  dbName: 'thuna_health',
   jsi: true,
 });
 
 export const database = new Database({
   adapter,
-  modelClasses: [EhrRecord, Patient, Reminder, Medication, Condition],
+  modelClasses: [Patient, Vital, Medication, Condition, Reminder, LabResult, AdherenceLog, EhrRecord],
 });
 
-export { EhrRecord, Patient, Reminder, Medication, Condition };
+export { Patient, Vital, Medication, Condition, Reminder, LabResult, AdherenceLog, EhrRecord };
