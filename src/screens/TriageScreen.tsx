@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../types/navigation';
 import { ChatMessage } from '../types/triage';
 import { useCactus } from '../context/CactusContext';
+import { useUser } from '../context/UserContext';
 import Tts from 'react-native-tts';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Triage'>;
@@ -17,13 +18,21 @@ export default function TriageScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const {
     agentState, isListening, completion, transcription, error,
-    startVoice, stopVoice, runTriageCycle, reset, _setOnVoiceResult, _setVoiceMode,
+    startVoice, stopVoice, runTriageCycle, reset, _setOnVoiceResult, _setVoiceMode, _setPatientId,
   } = useCactus() as any;
+  const { currentUser } = useUser();
+
+  // Set patient ID for database operations
+  useEffect(() => {
+    if (currentUser && _setPatientId) {
+      _setPatientId(currentUser.id);
+    }
+  }, [currentUser]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: '0',
-      text: 'നമസ്കാരം! ഞാൻ തുണ ആണ് — നിങ്ങളുടെ ആരോഗ്യ സഹായി.\n\n🎤 ടാപ്പ് — ഒറ്റ ചോദ്യം\n🎤 ലോങ് പ്രസ്സ് — തുടർച്ചയായ സംഭാഷണം\n⌨️ ടൈപ്പ് ചെയ്യുക\n📷 പ്രിസ്ക്രിപ്ഷൻ ഫോട്ടോ',
+      text: `നമസ്കാരം ${currentUser?.name || ''}! ഞാൻ തുണ ആണ് — നിങ്ങളുടെ ആരോഗ്യ സഹായി.\n\n🎤 ടാപ്പ് — സംസാരിക്കുക\n⌨️ ടൈപ്പ് ചെയ്യുക\n📷 ഫോട്ടോ ചേർക്കുക`,
       isUser: false,
       timestamp: Date.now(),
     },

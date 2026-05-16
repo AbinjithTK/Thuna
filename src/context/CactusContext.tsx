@@ -79,6 +79,7 @@ export function CactusProvider({ children }: { children: React.ReactNode }) {
   const onVoiceResultRef = useRef<((text: string) => void) | null>(null);
   const voiceModeRef = useRef(false);
   const audioBufferRef = useRef<string[]>([]); // Collect base64 audio chunks
+  const patientIdRef = useRef('default'); // Current patient ID
 
   // ══════════════════════════════════════════════════════════════════════════
   // VOICE: Android native SpeechRecognizer
@@ -268,7 +269,7 @@ export function CactusProvider({ children }: { children: React.ReactNode }) {
       // STEP 1: Run the deterministic agent engine
       // This parses intent, executes tools, and builds context for the LLM
       setAgentState('calling_tool');
-      const agentResult = await runAgent(input, 'default');
+      const agentResult = await runAgent(input, patientIdRef.current);
 
       // STEP 2: Use Gemma 4 ONLY for generating the natural language response
       setAgentState('responding');
@@ -360,6 +361,7 @@ export function CactusProvider({ children }: { children: React.ReactNode }) {
       // @ts-ignore — expose ref setter for TriageScreen
       _setOnVoiceResult: (cb: (text: string) => void) => { onVoiceResultRef.current = cb; },
       _setVoiceMode: (active: boolean) => { voiceModeRef.current = active; },
+      _setPatientId: (id: string) => { patientIdRef.current = id; },
     }}>
       {children}
     </CactusContext.Provider>

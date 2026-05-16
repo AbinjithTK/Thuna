@@ -1,15 +1,16 @@
-import React, { useState } from 'react';
-import { Text, View, StyleSheet } from 'react-native';
+import React from 'react';
+import { Text, ActivityIndicator, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { CactusProvider } from './src/context/CactusContext';
+import { UserProvider, useUser } from './src/context/UserContext';
 import HomeScreen from './src/screens/HomeScreen';
 import TriageScreen from './src/screens/TriageScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import RemindersScreen from './src/screens/RemindersScreen';
-import OnboardingScreen from './src/screens/OnboardingScreen';
+import LoginScreen from './src/screens/LoginScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -19,6 +20,7 @@ function TabIcon({ icon, focused }: { icon: string; focused: boolean }) {
 }
 
 function MainTabs() {
+  const { currentUser } = useUser();
   return (
     <Tab.Navigator
       screenOptions={{
@@ -34,7 +36,7 @@ function MainTabs() {
         name="Chat"
         component={TriageScreen}
         options={{
-          title: '💬 Thuna',
+          title: `💬 ${currentUser?.name || 'Thuna'}`,
           tabBarIcon: ({ focused }) => <TabIcon icon="💬" focused={focused} />,
           tabBarLabel: 'Chat',
         }}
@@ -43,7 +45,6 @@ function MainTabs() {
         name="Profile"
         component={ProfileScreen}
         options={{
-          title: '👤 Profile',
           headerShown: false,
           tabBarIcon: ({ focused }) => <TabIcon icon="👤" focused={focused} />,
           tabBarLabel: 'Profile',
@@ -53,7 +54,6 @@ function MainTabs() {
         name="Reminders"
         component={RemindersScreen}
         options={{
-          title: '⏰ Reminders',
           headerShown: false,
           tabBarIcon: ({ focused }) => <TabIcon icon="⏰" focused={focused} />,
           tabBarLabel: 'Reminders',
@@ -63,35 +63,41 @@ function MainTabs() {
   );
 }
 
-export default function App(): React.JSX.Element {
-  const [isOnboarded, setIsOnboarded] = useState(false);
-  const [patientData, setPatientData] = useState<any>(null);
+function AppContent() {
+  const { currentUser, isLoading } = useUser();
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5F5' }}>
+        <ActivityIndicator size="large" color="#1B5E20" />
+      </View>
+    );
+  }
 
   return (
+    <NavigationContainer>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        {!currentUser ? (
+          <Stack.Screen name="Login" component={LoginScreen} />
+        ) : (
+          <>
+            <Stack.Screen name="Home" component={HomeScreen} />
+            <Stack.Screen name="Main" component={MainTabs} />
+          </>
+        )}
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
+
+export default function App(): React.JSX.Element {
+  return (
     <SafeAreaProvider>
-      <CactusProvider>
-        <NavigationContainer>
-          <Stack.Navigator screenOptions={{ headerShown: false }}>
-            {!isOnboarded ? (
-              <Stack.Screen name="Onboarding">
-                {() => (
-                  <OnboardingScreen
-                    onComplete={(data) => {
-                      setPatientData(data);
-                      setIsOnboarded(true);
-                    }}
-                  />
-                )}
-              </Stack.Screen>
-            ) : (
-              <>
-                <Stack.Screen name="Home" component={HomeScreen} />
-                <Stack.Screen name="Main" component={MainTabs} />
-              </>
-            )}
-          </Stack.Navigator>
-        </NavigationContainer>
-      </CactusProvider>
+      <UserProvider>
+        <CactusProvider>
+          <AppContent />
+        </CactusProvider>
+      </UserProvider>
     </SafeAreaProvider>
   );
 }
