@@ -1,165 +1,133 @@
 import React, { useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ActivityIndicator,
-} from 'react-native';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCactus } from '../context/CactusContext';
+import { useUser } from '../context/UserContext';
+import { colors, spacing, radius, fontSize, shadow } from '../theme';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
-
-export default function HomeScreen({ navigation }: Props) {
+export default function HomeScreen({ navigation }: any) {
+  const insets = useSafeAreaInsets();
   const { agentState, downloadProgress, error, initialize } = useCactus();
+  const { currentUser, logout } = useUser();
 
   useEffect(() => {
-    // Auto-initialize on mount
-    if (agentState === 'idle') {
-      initialize();
-    }
+    if (agentState === 'idle') initialize();
   }, []);
 
-  const isLoading =
-    agentState === 'downloading' || agentState === 'initializing';
+  const isLoading = agentState === 'downloading' || agentState === 'initializing';
 
   return (
-    <View style={styles.container}>
-      {/* Logo */}
-      <View style={styles.logoContainer}>
-        <Text style={styles.logoIcon}>🤝</Text>
-        <Text style={styles.title}>Thuna</Text>
-        <Text style={styles.subtitle}>നിങ്ങളുടെ ആരോഗ്യ തുണ</Text>
-        <Text style={styles.subtitleEn}>Your Health Companion, Always Beside You</Text>
+    <View style={[styles.container, { paddingTop: insets.top + 40 }]}>
+      {/* Header with user info */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.greeting}>നമസ്കാരം,</Text>
+          <Text style={styles.userName}>{currentUser?.name || 'User'} 👋</Text>
+        </View>
+        <TouchableOpacity style={styles.logoutBtn} onPress={logout}>
+          <Text style={styles.logoutText}>🔄</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Status */}
-      <View style={styles.statusContainer}>
+      {/* Main content */}
+      <View style={styles.content}>
+        <View style={styles.logoCircle}>
+          <Text style={styles.logoEmoji}>🤝</Text>
+        </View>
+        <Text style={styles.title}>Thuna</Text>
+        <Text style={styles.subtitle}>നിങ്ങളുടെ ആരോഗ്യ തുണ</Text>
+
+        {/* Status */}
         {isLoading && (
-          <>
-            <ActivityIndicator size="large" color="#1B5E20" />
-            <Text style={styles.statusText}>
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={styles.loadingText}>
               {agentState === 'downloading'
-                ? `മോഡൽ ഡൗൺലോഡ് ചെയ്യുന്നു... ${Math.round(downloadProgress * 100)}%\n(Gemma 4 E2B — ~4.7GB, first time only)`
-                : 'എഞ്ചിൻ ആരംഭിക്കുന്നു... (Initializing engine)'}
+                ? `Gemma 4 ഡൗൺലോഡ്... ${Math.round(downloadProgress * 100)}%`
+                : 'Engine ആരംഭിക്കുന്നു...'}
             </Text>
-          </>
+            <View style={styles.progressBar}>
+              <View style={[styles.progressFill, { width: `${downloadProgress * 100}%` }]} />
+            </View>
+          </View>
         )}
 
         {agentState === 'ready' && (
           <>
-            <StatusRow icon="🎤" label="Cactus Whisper STT" ready />
-            <StatusRow icon="🧠" label="Gemma 4 E2B (on-device)" ready />
-            <StatusRow icon="🔊" label="മലയാളം TTS" ready />
-            <StatusRow icon="📡" label="VAD (Silero)" ready />
-
-            {/* Offline badge */}
-            <View style={styles.offlineBadge}>
-              <Text style={styles.offlineBadgeText}>
-                ✈️ ഓഫ്‌ലൈൻ മോഡ് — No Internet Required
-              </Text>
+            <View style={styles.statusRow}>
+              <View style={styles.statusChip}>
+                <Text style={styles.statusDot}>🟢</Text>
+                <Text style={styles.statusLabel}>Gemma 4 Ready</Text>
+              </View>
+              <View style={styles.statusChip}>
+                <Text style={styles.statusDot}>🟢</Text>
+                <Text style={styles.statusLabel}>Offline Mode</Text>
+              </View>
             </View>
+
+            <TouchableOpacity style={styles.startBtn} onPress={() => navigation.navigate('Main')}>
+              <Text style={styles.startBtnText}>💬 സംസാരിക്കാം</Text>
+              <Text style={styles.startBtnSub}>Start Conversation</Text>
+            </TouchableOpacity>
           </>
         )}
 
         {agentState === 'error' && (
-          <View style={styles.errorContainer}>
+          <View style={styles.errorCard}>
             <Text style={styles.errorText}>⚠️ {error}</Text>
-            <TouchableOpacity style={styles.retryButton} onPress={initialize}>
-              <Text style={styles.retryButtonText}>വീണ്ടും ശ്രമിക്കുക</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={initialize}>
+              <Text style={styles.retryBtnText}>വീണ്ടും ശ്രമിക്കുക</Text>
             </TouchableOpacity>
           </View>
         )}
       </View>
-
-      {/* Start Button */}
-      {agentState === 'ready' && (
-        <TouchableOpacity
-          style={styles.startButton}
-          onPress={() => navigation.navigate('Main')}>
-          <Text style={styles.startButtonText}>
-            ▶ ട്രയേജ് ആരംഭിക്കുക{'\n'}
-            <Text style={styles.startButtonSubtext}>Start Triage</Text>
-          </Text>
-        </TouchableOpacity>
-      )}
-    </View>
-  );
-}
-
-function StatusRow({
-  icon,
-  label,
-  ready,
-}: {
-  icon: string;
-  label: string;
-  ready: boolean;
-}) {
-  return (
-    <View style={styles.statusRow}>
-      <Text style={styles.statusIcon}>{ready ? '✅' : '⏳'}</Text>
-      <Text style={styles.statusLabel}>
-        {icon} {label}
-      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FAFAFA',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
+  container: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: spacing.xl },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 40 },
+  greeting: { fontSize: fontSize.md, color: colors.textSecondary },
+  userName: { fontSize: fontSize.xxl, fontWeight: '700', color: colors.textPrimary },
+  logoutBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.bgSecondary, alignItems: 'center', justifyContent: 'center' },
+  logoutText: { fontSize: 20 },
+  content: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  logoCircle: {
+    width: 120, height: 120, borderRadius: 60,
+    backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center',
+    ...shadow.lg,
   },
-  logoContainer: { alignItems: 'center', marginBottom: 48 },
-  logoIcon: { fontSize: 64 },
-  title: { fontSize: 36, fontWeight: 'bold', color: '#1B5E20', marginTop: 12 },
-  subtitle: { fontSize: 16, color: '#555', marginTop: 8 },
-  subtitleEn: { fontSize: 13, color: '#888', marginTop: 2 },
-  statusContainer: { alignItems: 'center', marginBottom: 32, width: '100%' },
-  statusText: { fontSize: 14, color: '#555', marginTop: 12 },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 4,
+  logoEmoji: { fontSize: 56 },
+  title: { fontSize: fontSize.hero, fontWeight: '800', color: colors.primary, marginTop: spacing.lg },
+  subtitle: { fontSize: fontSize.lg, color: colors.textSecondary, marginTop: spacing.xs },
+  loadingCard: {
+    marginTop: 40, width: '100%', padding: spacing.xl,
+    backgroundColor: colors.bgSecondary, borderRadius: radius.lg, alignItems: 'center',
   },
-  statusIcon: { fontSize: 16, marginRight: 8 },
-  statusLabel: { fontSize: 14, color: '#333' },
-  offlineBadge: {
-    marginTop: 16,
-    backgroundColor: '#E8F5E9',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
+  loadingText: { fontSize: fontSize.md, color: colors.textSecondary, marginTop: spacing.md },
+  progressBar: { width: '100%', height: 8, backgroundColor: colors.border, borderRadius: 4, marginTop: spacing.md, overflow: 'hidden' },
+  progressFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 4 },
+  statusRow: { flexDirection: 'row', gap: spacing.md, marginTop: 30 },
+  statusChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: colors.primaryLight, borderRadius: radius.full,
   },
-  offlineBadgeText: { fontSize: 12, color: '#2E7D32', fontWeight: '600' },
-  errorContainer: { alignItems: 'center' },
-  errorText: { fontSize: 14, color: '#C62828', textAlign: 'center' },
-  retryButton: {
-    marginTop: 12,
-    backgroundColor: '#1B5E20',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
+  statusDot: { fontSize: 10 },
+  statusLabel: { fontSize: fontSize.sm, color: colors.primaryDark, fontWeight: '600' },
+  startBtn: {
+    marginTop: 40, width: '100%', height: 80, borderRadius: radius.xl,
+    backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
+    ...shadow.lg,
   },
-  retryButtonText: { color: '#fff', fontWeight: '600' },
-  startButton: {
-    backgroundColor: '#1B5E20',
-    paddingHorizontal: 40,
-    paddingVertical: 18,
-    borderRadius: 12,
-    elevation: 4,
+  startBtnText: { fontSize: fontSize.xxl, fontWeight: '700', color: '#fff' },
+  startBtnSub: { fontSize: fontSize.sm, color: 'rgba(255,255,255,0.7)', marginTop: 2 },
+  errorCard: {
+    marginTop: 30, width: '100%', padding: spacing.xl,
+    backgroundColor: '#FEF2F2', borderRadius: radius.lg, alignItems: 'center',
   },
-  startButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  startButtonSubtext: { fontSize: 13, fontWeight: 'normal' },
+  errorText: { fontSize: fontSize.md, color: colors.danger, textAlign: 'center' },
+  retryBtn: { marginTop: spacing.md, paddingHorizontal: spacing.xl, paddingVertical: spacing.md, backgroundColor: colors.danger, borderRadius: radius.full },
+  retryBtnText: { fontSize: fontSize.md, fontWeight: '600', color: '#fff' },
 });

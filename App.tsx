@@ -24,13 +24,13 @@ function MainTabs() {
   return (
     <Tab.Navigator
       screenOptions={{
-        headerStyle: { backgroundColor: '#1B5E20' },
+        headerStyle: { backgroundColor: '#0D7C66' },
         headerTintColor: '#fff',
         headerTitleStyle: { fontWeight: 'bold', fontSize: 18 },
-        tabBarStyle: { height: 75, paddingBottom: 20, paddingTop: 8 },
-        tabBarLabelStyle: { fontSize: 12, fontWeight: '600' },
-        tabBarActiveTintColor: '#1B5E20',
-        tabBarInactiveTintColor: '#999',
+        tabBarStyle: { height: 75, paddingBottom: 20, paddingTop: 8, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E5E7EB' },
+        tabBarLabelStyle: { fontSize: 13, fontWeight: '600' },
+        tabBarActiveTintColor: '#0D7C66',
+        tabBarInactiveTintColor: '#9CA3AF',
       }}>
       <Tab.Screen
         name="Chat"

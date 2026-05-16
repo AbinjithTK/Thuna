@@ -196,13 +196,14 @@ export async function runAgent(userInput: string, patientId: string = 'default')
       }
 
       case 'symptom_report': {
-        contextForLLM = `Patient reports: "${userInput}". Respond as nadan Malayalam village doctor — ask 1-2 clarifying questions, give immediate advice, say when to go to hospital. Be brief and direct.`;
+        contextForLLM = userInput;
         break;
       }
 
       case 'general_chat':
       default: {
-        contextForLLM = `User said: "${userInput}". Respond naturally in nadan Malayalam as a friendly health companion. Be brief, warm, helpful.`;
+        // Pass the original user text directly — let Gemma 4 be a full knowledge base
+        contextForLLM = userInput;
         break;
       }
     }

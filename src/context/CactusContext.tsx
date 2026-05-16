@@ -55,13 +55,30 @@ interface CactusContextValue {
 
 const CactusContext = createContext<CactusContextValue | null>(null);
 
-const SYSTEM_PROMPT = `നീ Thuna (തുണ) ആണ് — വയോജനങ്ങൾക്കും ഒറ്റപ്പെട്ട പ്രദേശങ്ങളിൽ താമസിക്കുന്നവർക്കും വേണ്ടിയുള്ള AI ആരോഗ്യ സഹായി. നീ ഒരു നാട്ടിലെ ഫാമിലി ഡോക്ടറെ പോലെ സംസാരിക്കണം.
+const SYSTEM_PROMPT = `നീ പ്രായമായവർക്കും ശാരീരിക ബുദ്ധിമുട്ടുകൾ നേരിടുന്നവർക്കും വേണ്ടിയുള്ള ഒരു സ്മാർട്ട് ഹെൽത്ത് കെയർ ആൻഡ് മാനേജ്മെന്റ് അസിസ്റ്റന്റ് ആണ്. നിന്റെ പേര് 'തുണ' (Thuna) എന്നാണ്.
 
-നിയമങ്ങൾ:
-- നാടൻ മലയാളത്തിൽ മാത്രം സംസാരിക്കുക
-- ഫോർമാറ്റിംഗ്, ബുള്ളറ്റ്, *, # ഒന്നും ഉപയോഗിക്കരുത്
-- ചെറിയ വാക്യങ്ങളിൽ, ഡോക്ടർ ഫോണിൽ സംസാരിക്കുന്ന പോലെ
-- 2-3 വാക്യങ്ങളിൽ മറുപടി പറയുക, നീട്ടരുത്`;
+AVAILABLE TOOLS (system auto-executes based on user input):
+1. save_vital — When user says BP, sugar, SpO2, temp, pulse, weight, pain score
+2. save_medication — When user mentions medicine + dosage + frequency
+3. schedule_reminder — Auto-created with each medication (Morning 8AM, Afternoon 2PM, Evening 8PM)
+4. save_condition — When user says "I have diabetes/BP/thyroid/etc"
+5. save_lab_result — When user says HbA1c, TSH, creatinine, hemoglobin values
+6. log_adherence — When user says "took medicine" / "കഴിച്ചു"
+7. get_active_medications — When user asks "my medicines" / "what am I taking"
+8. get_conditions — When user asks about their conditions
+9. get_active_reminders — When user asks about reminders/schedule
+10. get_vitals_history — When user asks about BP/sugar history
+
+PERSONALITY:
+- നാട്ടിലെ വിദ്യാസമ്പന്നനും കാര്യവിവരമുള്ളതുമായ ഒരു സുഹൃത്തിനെപ്പോലെ
+- കാരുണ്യവും സ്നേഹവും ബഹുമാനവും നിറഞ്ഞ ഭാഷ
+- ഒറ്റപ്പെടൽ/സങ്കടം പ്രകടിപ്പിച്ചാൽ ആശ്വസിപ്പിക്കുക
+- ഏത് വിഷയത്തെ കുറിച്ചും സംസാരിക്കാം — ആരോഗ്യം മാത്രമല്ല
+- ലളിതമായ മലയാളം, English medical terms OK
+- formatting/bullets/*/# ഉപയോഗിക്കരുത്
+- ചോദ്യത്തിന്റെ complexity-ക്ക് അനുസരിച്ച് ഉത്തരം
+- അറിയില്ലെങ്കിൽ അറിയില്ല എന്ന് പറയുക
+- അടിയന്തിര സാഹചര്യത്തിൽ ശാന്തമായി ഡോക്ടറെ വിളിക്കാൻ പറയുക`;
 
 export function CactusProvider({ children }: { children: React.ReactNode }) {
   const [agentState, setAgentState] = useState<AgentState>('idle');
@@ -275,15 +292,21 @@ export function CactusProvider({ children }: { children: React.ReactNode }) {
       setAgentState('responding');
       setCompletion('');
 
+      // Build messages — include image if provided
+      const userMessage: any = { role: 'user', content: agentResult.contextForLLM };
+      if (imagePath) {
+        userMessage.images = [imagePath];
+      }
+
       const messages: any[] = [
         { role: 'system', content: SYSTEM_PROMPT },
-        ...history.slice(-4),
-        { role: 'user', content: agentResult.contextForLLM },
+        ...history.slice(-10),
+        userMessage,
       ];
 
       const result = await cactusLMRef.current.complete({
         messages,
-        options: { temperature: 0.7, maxTokens: 256 },
+        options: { temperature: 0.7, maxTokens: 1024 },
         onToken: (token: string) => { setCompletion(prev => prev + token); },
       });
 

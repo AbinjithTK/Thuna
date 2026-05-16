@@ -1,136 +1,111 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useUser } from '../context/UserContext';
 
-interface ProfileData {
-  name: string;
-  age: string;
-  gender: string;
-  village: string;
-  bloodGroup: string;
-  conditions: Array<{ name: string; date: string; status: string }>;
-  medications: Array<{ name: string; dosage: string; frequency: string; active: boolean }>;
-  timeline: Array<{ date: string; event: string; type: string }>;
-}
-
-export default function ProfileScreen({ route }: any) {
+export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
-  const [activeTab, setActiveTab] = useState<'overview' | 'conditions' | 'timeline'>('overview');
+  const { currentUser, logout } = useUser();
+  const [tab, setTab] = useState<'overview' | 'timeline'>('overview');
 
-  // Mock data — in production this comes from WatermelonDB
-  const profile: ProfileData = {
-    name: route?.params?.patientData?.name || 'Patient',
-    age: route?.params?.patientData?.age || '',
-    gender: route?.params?.patientData?.gender || '',
-    village: route?.params?.patientData?.village || '',
-    bloodGroup: route?.params?.patientData?.bloodGroup || '',
-    conditions: [
-      { name: 'Type 2 Diabetes', date: '2024-03-15', status: 'chronic' },
-      { name: 'Hypertension', date: '2023-11-20', status: 'active' },
-    ],
-    medications: [
-      { name: 'Metformin', dosage: '500mg', frequency: 'Twice daily', active: true },
-      { name: 'Amlodipine', dosage: '5mg', frequency: 'Once daily', active: true },
-      { name: 'Paracetamol', dosage: '650mg', frequency: 'When needed', active: false },
-    ],
-    timeline: [
-      { date: '2026-05-15', event: 'BP checked: 130/85', type: 'vital' },
-      { date: '2026-05-14', event: 'Metformin 500mg prescribed', type: 'medication' },
-      { date: '2026-05-12', event: 'Fever reported, Paracetamol given', type: 'visit' },
-      { date: '2026-05-10', event: 'Blood sugar: 145 mg/dL', type: 'vital' },
-      { date: '2026-05-05', event: 'Routine checkup — stable', type: 'visit' },
-    ],
-  };
+  const conditions = [
+    { name: 'Type 2 Diabetes', status: 'Chronic', since: '2024' },
+    { name: 'Hypertension', status: 'Active', since: '2023' },
+  ];
+
+  const medications = [
+    { name: 'Metformin', dosage: '500mg', freq: 'Twice daily' },
+    { name: 'Amlodipine', dosage: '5mg', freq: 'Once daily' },
+  ];
+
+  const timeline = [
+    { date: 'Today', event: 'BP: 128/82 mmHg', icon: '❤️' },
+    { date: 'Today', event: 'Sugar: 142 mg/dL (fasting)', icon: '🩸' },
+    { date: 'Yesterday', event: 'Metformin taken ✓', icon: '💊' },
+    { date: 'May 14', event: 'Paracetamol 650mg prescribed', icon: '📋' },
+    { date: 'May 12', event: 'Fever reported — 101°F', icon: '🌡️' },
+  ];
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom }]}>
-      {/* Patient header */}
-      <View style={styles.header}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{profile.name.charAt(0).toUpperCase()}</Text>
+    <View style={[s.root, { paddingTop: insets.top }]}>
+      {/* Profile header */}
+      <View style={s.profileHeader}>
+        <View style={s.avatarLarge}>
+          <Text style={s.avatarLetter}>{currentUser?.name?.charAt(0).toUpperCase() || 'U'}</Text>
         </View>
-        <View style={styles.headerInfo}>
-          <Text style={styles.name}>{profile.name}</Text>
-          <Text style={styles.details}>
-            {profile.age} വയസ്സ് • {profile.gender} • {profile.bloodGroup}
-          </Text>
-          <Text style={styles.village}>📍 {profile.village}</Text>
+        <View style={s.profileInfo}>
+          <Text style={s.profileName}>{currentUser?.name || 'User'}</Text>
+          <Text style={s.profileMeta}>{currentUser?.age ? `${currentUser.age} yrs` : ''} {currentUser?.gender || ''} {currentUser?.bloodGroup ? `• ${currentUser.bloodGroup}` : ''}</Text>
+          <Text style={s.profileVillage}>📍 {currentUser?.village || 'Location not set'}</Text>
         </View>
+        <TouchableOpacity style={s.switchBtn} onPress={logout}>
+          <Text style={s.switchText}>Switch</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Tabs */}
-      <View style={styles.tabs}>
-        {(['overview', 'conditions', 'timeline'] as const).map(tab => (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.tab, activeTab === tab && styles.tabActive]}
-            onPress={() => setActiveTab(tab)}>
-            <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-              {tab === 'overview' ? '📋 Overview' : tab === 'conditions' ? '🏥 Conditions' : '📅 Timeline'}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <View style={s.tabs}>
+        <TouchableOpacity style={[s.tab, tab === 'overview' && s.tabActive]} onPress={() => setTab('overview')}>
+          <Text style={[s.tabText, tab === 'overview' && s.tabTextActive]}>Overview</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.tab, tab === 'timeline' && s.tabActive]} onPress={() => setTab('timeline')}>
+          <Text style={[s.tabText, tab === 'timeline' && s.tabTextActive]}>Timeline</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
-        {activeTab === 'overview' && (
+      <ScrollView style={s.content} contentContainerStyle={s.contentInner}>
+        {tab === 'overview' && (
           <>
-            {/* Active medications */}
-            <Text style={styles.sectionTitle}>💊 Active Medications</Text>
-            {profile.medications.filter(m => m.active).map((med, i) => (
-              <View key={i} style={styles.card}>
-                <Text style={styles.cardTitle}>{med.name}</Text>
-                <Text style={styles.cardSub}>{med.dosage} — {med.frequency}</Text>
+            {/* Conditions */}
+            <Text style={s.sectionLabel}>Conditions</Text>
+            {conditions.map((c, i) => (
+              <View key={i} style={s.card}>
+                <View style={s.cardRow}>
+                  <Text style={s.cardTitle}>{c.name}</Text>
+                  <View style={[s.badge, c.status === 'Chronic' ? s.badgeOrange : s.badgeGreen]}>
+                    <Text style={s.badgeText}>{c.status}</Text>
+                  </View>
+                </View>
+                <Text style={s.cardSub}>Since {c.since}</Text>
+              </View>
+            ))}
+
+            {/* Active Medications */}
+            <Text style={[s.sectionLabel, { marginTop: 24 }]}>Active Medications</Text>
+            {medications.map((m, i) => (
+              <View key={i} style={s.card}>
+                <Text style={s.cardTitle}>{m.name}</Text>
+                <Text style={s.cardSub}>{m.dosage} — {m.freq}</Text>
               </View>
             ))}
 
             {/* Quick stats */}
-            <Text style={styles.sectionTitle}>📊 Quick Stats</Text>
-            <View style={styles.statsRow}>
-              <View style={styles.statBox}>
-                <Text style={styles.statNumber}>{profile.conditions.length}</Text>
-                <Text style={styles.statLabel}>Conditions</Text>
+            <View style={s.statsRow}>
+              <View style={s.statCard}>
+                <Text style={s.statNum}>{conditions.length}</Text>
+                <Text style={s.statLabel}>Conditions</Text>
               </View>
-              <View style={styles.statBox}>
-                <Text style={styles.statNumber}>{profile.medications.filter(m => m.active).length}</Text>
-                <Text style={styles.statLabel}>Active Meds</Text>
+              <View style={s.statCard}>
+                <Text style={s.statNum}>{medications.length}</Text>
+                <Text style={s.statLabel}>Medications</Text>
               </View>
-              <View style={styles.statBox}>
-                <Text style={styles.statNumber}>{profile.timeline.length}</Text>
-                <Text style={styles.statLabel}>Records</Text>
+              <View style={s.statCard}>
+                <Text style={s.statNum}>{timeline.length}</Text>
+                <Text style={s.statLabel}>Records</Text>
               </View>
             </View>
           </>
         )}
 
-        {activeTab === 'conditions' && (
+        {tab === 'timeline' && (
           <>
-            <Text style={styles.sectionTitle}>🏥 Medical Conditions</Text>
-            {profile.conditions.map((cond, i) => (
-              <View key={i} style={styles.card}>
-                <View style={styles.cardRow}>
-                  <Text style={styles.cardTitle}>{cond.name}</Text>
-                  <View style={[styles.statusBadge, cond.status === 'chronic' ? styles.badgeChronic : styles.badgeActive]}>
-                    <Text style={styles.statusText}>{cond.status}</Text>
-                  </View>
-                </View>
-                <Text style={styles.cardSub}>Diagnosed: {cond.date}</Text>
-              </View>
-            ))}
-          </>
-        )}
-
-        {activeTab === 'timeline' && (
-          <>
-            <Text style={styles.sectionTitle}>📅 Health Timeline</Text>
-            {profile.timeline.map((entry, i) => (
-              <View key={i} style={styles.timelineItem}>
-                <View style={styles.timelineDot}>
-                  <Text>{entry.type === 'vital' ? '❤️' : entry.type === 'medication' ? '💊' : '🩺'}</Text>
-                </View>
-                <View style={styles.timelineContent}>
-                  <Text style={styles.timelineDate}>{entry.date}</Text>
-                  <Text style={styles.timelineEvent}>{entry.event}</Text>
+            <Text style={s.sectionLabel}>Health Timeline</Text>
+            {timeline.map((t, i) => (
+              <View key={i} style={s.timelineItem}>
+                <View style={s.timelineDot}><Text>{t.icon}</Text></View>
+                <View style={s.timelineBody}>
+                  <Text style={s.timelineDate}>{t.date}</Text>
+                  <Text style={s.timelineEvent}>{t.event}</Text>
                 </View>
               </View>
             ))}
@@ -141,38 +116,46 @@ export default function ProfileScreen({ route }: any) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F5' },
-  header: { flexDirection: 'row', alignItems: 'center', padding: 20, backgroundColor: '#1B5E20' },
-  avatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontSize: 28, fontWeight: 'bold', color: '#1B5E20' },
-  headerInfo: { marginLeft: 16, flex: 1 },
-  name: { fontSize: 22, fontWeight: 'bold', color: '#fff' },
-  details: { fontSize: 14, color: '#C8E6C9', marginTop: 4 },
-  village: { fontSize: 13, color: '#A5D6A7', marginTop: 2 },
-  tabs: { flexDirection: 'row', backgroundColor: '#fff', elevation: 2 },
-  tab: { flex: 1, paddingVertical: 14, alignItems: 'center' },
-  tabActive: { borderBottomWidth: 3, borderBottomColor: '#1B5E20' },
-  tabText: { fontSize: 13, color: '#666' },
-  tabTextActive: { color: '#1B5E20', fontWeight: '700' },
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#FAFBFC' },
+  // Profile header
+  profileHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 20, gap: 16 },
+  avatarLarge: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#0D7C66', alignItems: 'center', justifyContent: 'center' },
+  avatarLetter: { fontSize: 28, fontWeight: '700', color: '#fff' },
+  profileInfo: { flex: 1 },
+  profileName: { fontSize: 24, fontWeight: '700', color: '#111827' },
+  profileMeta: { fontSize: 14, color: '#6B7280', marginTop: 2 },
+  profileVillage: { fontSize: 13, color: '#9CA3AF', marginTop: 2 },
+  switchBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: '#F3F4F6' },
+  switchText: { fontSize: 13, fontWeight: '600', color: '#374151' },
+  // Tabs
+  tabs: { flexDirection: 'row', paddingHorizontal: 24, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  tab: { paddingVertical: 14, marginRight: 24 },
+  tabActive: { borderBottomWidth: 2, borderBottomColor: '#0D7C66' },
+  tabText: { fontSize: 16, color: '#9CA3AF', fontWeight: '500' },
+  tabTextActive: { color: '#0D7C66', fontWeight: '600' },
+  // Content
   content: { flex: 1 },
-  contentInner: { padding: 16 },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#333', marginBottom: 12, marginTop: 8 },
-  card: { backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 10, elevation: 2 },
+  contentInner: { padding: 24 },
+  sectionLabel: { fontSize: 13, fontWeight: '600', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 },
+  // Cards
+  card: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 18, marginBottom: 10, borderWidth: 1, borderColor: '#F3F4F6' },
   cardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardTitle: { fontSize: 17, fontWeight: '600', color: '#222' },
-  cardSub: { fontSize: 14, color: '#666', marginTop: 4 },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  badgeChronic: { backgroundColor: '#FFF3E0' },
-  badgeActive: { backgroundColor: '#E8F5E9' },
-  statusText: { fontSize: 11, fontWeight: '600', color: '#333' },
-  statsRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  statBox: { flex: 1, backgroundColor: '#fff', borderRadius: 16, padding: 16, alignItems: 'center', elevation: 2 },
-  statNumber: { fontSize: 28, fontWeight: 'bold', color: '#1B5E20' },
-  statLabel: { fontSize: 12, color: '#666', marginTop: 4 },
-  timelineItem: { flexDirection: 'row', marginBottom: 16 },
-  timelineDot: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#E8F5E9', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  timelineContent: { flex: 1, backgroundColor: '#fff', borderRadius: 12, padding: 12, elevation: 1 },
-  timelineDate: { fontSize: 12, color: '#888' },
-  timelineEvent: { fontSize: 15, color: '#333', marginTop: 4 },
+  cardTitle: { fontSize: 17, fontWeight: '600', color: '#111827' },
+  cardSub: { fontSize: 14, color: '#6B7280', marginTop: 4 },
+  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  badgeGreen: { backgroundColor: '#F0FDF4' },
+  badgeOrange: { backgroundColor: '#FFF7ED' },
+  badgeText: { fontSize: 12, fontWeight: '600', color: '#374151' },
+  // Stats
+  statsRow: { flexDirection: 'row', gap: 12, marginTop: 24 },
+  statCard: { flex: 1, backgroundColor: '#FFFFFF', borderRadius: 14, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: '#F3F4F6' },
+  statNum: { fontSize: 28, fontWeight: '700', color: '#0D7C66' },
+  statLabel: { fontSize: 12, color: '#6B7280', marginTop: 4 },
+  // Timeline
+  timelineItem: { flexDirection: 'row', marginBottom: 20, gap: 14 },
+  timelineDot: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F0FDF4', alignItems: 'center', justifyContent: 'center' },
+  timelineBody: { flex: 1, paddingTop: 2 },
+  timelineDate: { fontSize: 12, color: '#9CA3AF', fontWeight: '500' },
+  timelineEvent: { fontSize: 16, color: '#1F2937', marginTop: 2 },
 });
