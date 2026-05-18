@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Share, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useUser } from '../context/UserContext';
 import { database, Medication, Condition, Vital, Reminder } from '../db';
 import { Q } from '@nozbe/watermelondb';
@@ -23,10 +24,12 @@ export default function ProfileScreen() {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [cloudInsight, setCloudInsight] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (currentUser) loadData();
-    loadSyncInfo();
-  }, [currentUser]);
+  useFocusEffect(
+    useCallback(() => {
+      if (currentUser) loadData();
+      loadSyncInfo();
+    }, [currentUser])
+  );
 
   const loadSyncInfo = async () => {
     const ts = await getLastSyncTime();

@@ -135,7 +135,6 @@ const VITAL_PATTERNS: Array<{ pattern: RegExp; type: string; unit: string; extra
     type: 'sugar', unit: 'mg/dL',
     extractFn: (m) => ({ primary: parseInt(m[1]), secondary: 0, context: 'random' }),
   },
-  },
   // SpO2: "oxygen 96", "spo2 95", "saturation 97"
   {
     pattern: /(?:spo2|oxygen|saturation|ഓക്സിജൻ)\s*:?\s*(\d{2,3})\s*%?/i,
@@ -226,10 +225,16 @@ export function parseIntent(input: string): Intent {
 
   // ═══════════════════════════════════════════════════════════════════════
   // PRIORITY 2: Mark medicine as taken — "കഴിച്ചു", "took metformin"
+  // Also catches: "sugar ഗുളിക കഴിച്ചു", "pressure tablet കഴിച്ചു"
   // ═══════════════════════════════════════════════════════════════════════
   if (/took|taken|കഴിച്ചു|എടുത്തു|had my|മരുന്ന്\s*കഴിച്ചു|ഗുളിക\s*കഴിച്ചു|tablet\s*കഴിച്ചു|medicine\s*കഴിച്ചു/i.test(input) && !/did|ചോ\?|ഓ\?|കഴിച്ചോ/i.test(input)) {
     const med = MEDICATIONS.find(m => lower.includes(m.toLowerCase()));
     if (med) return { type: 'mark_taken', medication: med };
+    // Colloquial: "sugar ഗുളിക", "pressure tablet", "BP മരുന്ന്"
+    if (/sugar|ഷുഗർ|പ്രമേഹ|diabetes/i.test(input)) return { type: 'mark_taken', medication: 'diabetes medicine' };
+    if (/pressure|bp|ബിപി|രക്തസമ്മർദ്ദ/i.test(input)) return { type: 'mark_taken', medication: 'BP medicine' };
+    if (/thyroid|തൈറോയ്ഡ്/i.test(input)) return { type: 'mark_taken', medication: 'thyroid medicine' };
+    if (/pain|വേദന|വേദനസംഹാരി/i.test(input)) return { type: 'mark_taken', medication: 'pain medicine' };
     if (/medicine|med|tablet|മരുന്ന്|ഗുളിക|ടാബ്ലറ്റ്/i.test(input)) {
       return { type: 'mark_taken', medication: 'medicine' };
     }

@@ -380,6 +380,42 @@ export function CactusProvider({ children }: { children: React.ReactNode }) {
       const triageResult = parseResponse(finalText);
       triageResult.reasoning = `⚡ ${inferenceMs}ms`;
 
+      // Post-LLM: check if the response or input implies a reminder should be set
+      // This catches cases where regex missed it but the context is clearly about scheduling
+      if (/ഓർമ്മിപ്പിക്ക|reminder|set|alarm|ഓർമ്മ/i.test(input) || /ഓർമ്മിപ്പിക്കാം|സെറ്റ്\s*ചെയ്/i.test(finalText)) {
+        // Create a reminder from the input
+        const timeMatch = input.match(/(\d{1,2})\s*(am|pm|മണി)/i);
+        let time = '08:00';
+        if (timeMatch) {
+          let h = parseInt(timeMatch[1]);
+          if (/pm/i.test(timeMatch[2]) && h < 12) h += 12;
+          time = `${h.toString().padStart(2, '0')}:00`;
+        } else if (/evening|വൈകുന്നേരം/i.test(input)) time = '18:00';
+        else if (/night|രാത്രി/i.test(input)) time = '21:00';
+        else if (/morning|രാവിലെ/i.test(input)) time = '08:00';
+
+        const title = input.replace(/remind|ഓർമ്മ|alarm|set|at|please|\d+\s*(am|pm|മണി)|morning|evening|night|രാവിലെ|വൈകുന്നേരം|രാത്രി/gi, '').trim() || 'Reminder';
+
+        try {
+          await database.write(async () => {
+            await database.get<Reminder>('reminders').create((r: any) => {
+              r.reminderId = `rem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              r.patientId = patientIdRef.current;
+              r.reminderType = 'custom';
+              r.medication = title;
+              r.dosage = '';
+              r.timeSlots = JSON.stringify([time]);
+              r.startDate = new Date().toISOString().split('T')[0];
+              r.endDate = '';
+              r.ttsMessage = `${title} — സമയമായി`;
+              r.isActive = true;
+              r.createdAt = Date.now();
+            });
+          });
+          triageResult.reasoning += ' | reminder: ✓';
+        } catch {}
+      }
+
       setLastResult(triageResult);
       updateHistory(input, finalText);
       setAgentState('ready');
