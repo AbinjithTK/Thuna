@@ -1,364 +1,480 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, FlatList } from 'react-native';
+import React, { useState, useCallback } from 'react';
+import {
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  Modal, TextInput, Alert, Switch, RefreshControl,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useUser } from '../context/UserContext';
-import { database, Reminder, AdherenceLog, Medication } from '../db';
+import { database, Reminder } from '../db';
 import { Q } from '@nozbe/watermelondb';
 import Tts from 'react-native-tts';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Date helpers
-// ═══════════════════════════════════════════════════════════════════════════
-
-function getWeekDates(baseDate: Date): Array<{ date: Date; dayName: string; dayNum: number; isToday: boolean }> {
-  const days = [];
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // Get Monday of the current week
-  const monday = new Date(baseDate);
-  const day = monday.getDay();
-  const diff = monday.getDate() - day + (day === 0 ? -6 : 1);
-  monday.setDate(diff);
-
-  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    d.setHours(0, 0, 0, 0);
-    days.push({
-      date: d,
-      dayName: dayNames[i],
-      dayNum: d.getDate(),
-      isToday: d.getTime() === today.getTime(),
-    });
-  }
-  return days;
-}
-
-function formatMonth(date: Date): string {
-  return date.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-}
+// Notifee may not be available — safe import
+let notifee: any = null;
+let TriggerType: any = {};
+let RepeatFrequency: any = {};
+try {
+  const n = require('@notifee/react-native');
+  notifee = n.default;
+  TriggerType = n.TriggerType;
+  RepeatFrequency = n.RepeatFrequency;
+} catch {}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
 // ═══════════════════════════════════════════════════════════════════════════
 
-interface MedSlot {
+interface ReminderItem {
   id: string;
-  medication: string;
-  dosage: string;
-  time: string;
-  period: 'morning' | 'afternoon' | 'evening';
-  status: 'pending' | 'taken' | 'missed' | 'upcoming';
-  reminderId: string;
+  dbId: string; // WatermelonDB record ID
+  title: string;
+  description: string;
+  type: string;
+  times: string[];
+  isActive: boolean;
+  ttsMessage: string;
+  createdAt: number;
+}
+
+const TYPES = [
+  { id: 'medication', label: 'Medicine', icon: '◉', color: '#0D7C66' },
+  { id: 'appointment', label: 'Appointment', icon: '◎', color: '#3B82F6' },
+  { id: 'vitals', label: 'Vitals', icon: '♡', color: '#EF4444' },
+  { id: 'exercise', label: 'Exercise', icon: '△', color: '#F59E0B' },
+  { id: 'water', label: 'Water', icon: '○', color: '#06B6D4' },
+  { id: 'custom', label: 'Custom', icon: '☆', color: '#8B5CF6' },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Notification Scheduling
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function scheduleNotification(reminder: ReminderItem) {
+  if (!notifee) return; // Notifee not available
+  try {
+    const channelId = await notifee.createChannel({
+      id: 'thuna-reminders',
+      name: 'Thuna Reminders',
+      sound: 'default',
+      importance: 4,
+    });
+
+    for (const timeStr of reminder.times) {
+      const [hours, minutes] = timeStr.split(':').map(Number);
+      const now = new Date();
+      const trigger = new Date();
+      trigger.setHours(hours, minutes, 0, 0);
+      if (trigger.getTime() <= now.getTime()) {
+        trigger.setDate(trigger.getDate() + 1);
+      }
+
+      await notifee.createTriggerNotification(
+        {
+          id: `${reminder.id}_${timeStr}`,
+          title: `💊 ${reminder.title}`,
+          body: reminder.ttsMessage || `${reminder.title} — സമയമായി`,
+          android: { channelId, pressAction: { id: 'default' } },
+        },
+        {
+          type: TriggerType.TIMESTAMP,
+          timestamp: trigger.getTime(),
+          repeatFrequency: RepeatFrequency.DAILY,
+        },
+      );
+    }
+  } catch (e) {
+    console.warn('Notification scheduling failed:', e);
+  }
+}
+
+async function cancelNotification(reminderId: string, times: string[]) {
+  if (!notifee) return;
+  try {
+    for (const timeStr of times) {
+      await notifee.cancelNotification(`${reminderId}_${timeStr}`);
+    }
+  } catch {}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Component
+// Screen
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function RemindersScreen() {
   const insets = useSafeAreaInsets();
   const { currentUser } = useUser();
-  const [selectedDate, setSelectedDate] = useState(new Date());
-  const [weekDates, setWeekDates] = useState(getWeekDates(new Date()));
-  const [medSlots, setMedSlots] = useState<MedSlot[]>([]);
-  const [adherenceMap, setAdherenceMap] = useState<Record<string, string>>({});
+  const [reminders, setReminders] = useState<ReminderItem[]>([]);
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState<ReminderItem | null>(null);
 
-  // Load reminders from database
-  useEffect(() => {
+  // Form state
+  const [fTitle, setFTitle] = useState('');
+  const [fDesc, setFDesc] = useState('');
+  const [fType, setFType] = useState('medication');
+  const [fTimes, setFTimes] = useState<string[]>(['08:00']);
+  const [fNewTime, setFNewTime] = useState('');
+  const [fTTS, setFTTS] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadReminders();
+    setRefreshing(false);
+  }, [currentUser]);
+
+  // Reload EVERY time this tab gets focus — increment key to force fresh query
+  useFocusEffect(
+    useCallback(() => {
+      setRefreshKey(k => k + 1);
+    }, [])
+  );
+
+  // Actually load when refreshKey changes
+  React.useEffect(() => {
     loadReminders();
-  }, [selectedDate, currentUser]);
+  }, [refreshKey, currentUser]);
 
+  // ── Load from WatermelonDB (fresh query every time) ──
   const loadReminders = async () => {
-    if (!currentUser) return;
-
     try {
-      const reminders = await database
-        .get<Reminder>('reminders')
-        .query(Q.where('patient_id', currentUser.id), Q.where('is_active', true))
+      const dbReminders = await database.get<Reminder>('reminders')
+        .query(Q.sortBy('created_at', Q.desc))
         .fetch();
 
-      const dateStr = selectedDate.toISOString().split('T')[0];
-      const now = new Date();
-      const currentHour = now.getHours();
+      const items: ReminderItem[] = dbReminders.map(r => {
+        let times: string[] = ['08:00'];
+        try { times = JSON.parse(r.timeSlots); } catch { times = [r.timeSlots || '08:00']; }
+        return {
+          id: r.reminderId,
+          dbId: r.id,
+          title: r.medication || 'Reminder',
+          description: r.dosage || '',
+          type: r.reminderType || 'medication',
+          times,
+          isActive: r.isActive,
+          ttsMessage: r.ttsMessage || `${r.medication} കഴിക്കാൻ സമയമായി`,
+          createdAt: r.createdAt,
+        };
+      });
+      setReminders(items);
+    } catch (e) {
+      console.warn('Load reminders error:', e);
+    }
+  };
 
-      // Build medication slots from reminders
-      const slots: MedSlot[] = [];
-      reminders.forEach(rem => {
-        try {
-          const times: string[] = JSON.parse(rem.timeSlots);
-          times.forEach((time, idx) => {
-            const hour = parseInt(time.split(':')[0]);
-            let period: 'morning' | 'afternoon' | 'evening' = 'morning';
-            if (hour >= 12 && hour < 17) period = 'afternoon';
-            else if (hour >= 17) period = 'evening';
+  // ── Save new reminder to WatermelonDB ──
+  const handleSave = async () => {
+    if (!fTitle.trim()) return;
+    const patientId = currentUser?.id || 'default';
+    const tts = fTTS.trim() || `${fTitle} ${fDesc} — കഴിക്കാൻ സമയമായി`;
+    const reminderId = `rem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
-            // Determine status
-            let status: 'pending' | 'taken' | 'missed' | 'upcoming' = 'pending';
-            const isToday = dateStr === new Date().toISOString().split('T')[0];
-            if (isToday) {
-              if (hour > currentHour) status = 'upcoming';
-              else status = 'pending';
-            }
-
-            slots.push({
-              id: `${rem.reminderId}_${idx}`,
-              medication: rem.medication,
-              dosage: rem.dosage,
-              time,
-              period,
-              status,
-              reminderId: rem.reminderId,
+    try {
+      if (editing) {
+        // Update existing
+        const records = await database.get<Reminder>('reminders')
+          .query(Q.where('reminder_id', editing.id)).fetch();
+        if (records.length > 0) {
+          await database.write(async () => {
+            await records[0].update((r: any) => {
+              r.medication = fTitle.trim();
+              r.dosage = fDesc.trim();
+              r.reminderType = fType;
+              r.timeSlots = JSON.stringify(fTimes);
+              r.ttsMessage = tts;
             });
           });
-        } catch {}
-      });
-
-      // Load adherence for selected date
-      const adherenceLogs = await database
-        .get<AdherenceLog>('adherence_log')
-        .query(Q.where('patient_id', currentUser.id), Q.where('date', dateStr))
-        .fetch();
-
-      const aMap: Record<string, string> = {};
-      adherenceLogs.forEach(log => {
-        aMap[`${log.medicationName}_${log.scheduledTime}`] = log.status;
-      });
-      setAdherenceMap(aMap);
-
-      // Update slot statuses from adherence
-      slots.forEach(slot => {
-        const key = `${slot.medication}_${slot.time}`;
-        if (aMap[key]) {
-          slot.status = aMap[key] as any;
+          // Reschedule notification
+          await cancelNotification(editing.id, editing.times);
+          await scheduleNotification({ ...editing, title: fTitle.trim(), times: fTimes, ttsMessage: tts });
         }
-      });
-
-      // Sort by time
-      slots.sort((a, b) => a.time.localeCompare(b.time));
-      setMedSlots(slots);
-    } catch (e) {
-      console.warn('Failed to load reminders:', e);
-      // Show demo data if DB fails
-      setMedSlots([
-        { id: '1', medication: 'Metformin', dosage: '500mg', time: '08:00', period: 'morning', status: 'pending', reminderId: 'demo1' },
-        { id: '2', medication: 'Amlodipine', dosage: '5mg', time: '08:00', period: 'morning', status: 'taken', reminderId: 'demo2' },
-        { id: '3', medication: 'Metformin', dosage: '500mg', time: '20:00', period: 'evening', status: 'upcoming', reminderId: 'demo3' },
-      ]);
-    }
-  };
-
-  // Mark medication as taken/missed
-  const markMed = async (slot: MedSlot, status: 'taken' | 'missed') => {
-    const dateStr = selectedDate.toISOString().split('T')[0];
-
-    try {
-      await database.write(async () => {
-        await database.get<AdherenceLog>('adherence_log').create((r: any) => {
-          r.patientId = currentUser?.id || 'default';
-          r.medicationName = slot.medication;
-          r.scheduledTime = slot.time;
-          r.takenAt = Date.now();
-          r.status = status;
-          r.date = dateStr;
+      } else {
+        // Create new
+        await database.write(async () => {
+          await database.get<Reminder>('reminders').create((r: any) => {
+            r.reminderId = reminderId;
+            r.patientId = patientId;
+            r.reminderType = fType;
+            r.medication = fTitle.trim();
+            r.dosage = fDesc.trim();
+            r.timeSlots = JSON.stringify(fTimes);
+            r.startDate = new Date().toISOString().split('T')[0];
+            r.endDate = '';
+            r.ttsMessage = tts;
+            r.isActive = true;
+            r.createdAt = Date.now();
+          });
         });
-      });
-    } catch {}
-
-    // Update local state
-    setMedSlots(prev => prev.map(s => s.id === slot.id ? { ...s, status } : s));
-
-    // TTS feedback
-    if (status === 'taken') {
-      Tts.setDefaultLanguage('ml-IN');
-      Tts.speak(`${slot.medication} കഴിച്ചു. നന്നായി!`);
+        // Schedule notification
+        await scheduleNotification({ id: reminderId, dbId: '', title: fTitle.trim(), description: fDesc.trim(), type: fType, times: fTimes, isActive: true, ttsMessage: tts, createdAt: Date.now() });
+      }
+      closeModal();
+      loadReminders();
+    } catch (e) {
+      console.warn('Save reminder error:', e);
     }
   };
 
-  // Preview TTS reminder sound
-  const previewTTS = (med: string, dosage: string) => {
+  // ── Delete ──
+  const handleDelete = (item: ReminderItem) => {
+    Alert.alert('Delete?', `Remove "${item.title}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+        try {
+          const records = await database.get<Reminder>('reminders')
+            .query(Q.where('reminder_id', item.id)).fetch();
+          if (records.length > 0) {
+            await database.write(async () => { await records[0].destroyPermanently(); });
+          }
+          await cancelNotification(item.id, item.times);
+          loadReminders();
+        } catch {}
+      }},
+    ]);
+  };
+
+  // ── Toggle active ──
+  const toggleActive = async (id: string) => {
+    try {
+      const item = reminders.find(r => r.id === id);
+      if (!item) return;
+      const records = await database.get<Reminder>('reminders')
+        .query(Q.where('reminder_id', id)).fetch();
+      if (records.length > 0) {
+        const newActive = !item.isActive;
+        await database.write(async () => {
+          await records[0].update((r: any) => { r.isActive = newActive; });
+        });
+        if (newActive) {
+          await scheduleNotification(item);
+        } else {
+          await cancelNotification(id, item.times);
+        }
+        loadReminders();
+      }
+    } catch {}
+  };
+
+  // ── Edit ──
+  const openEdit = (item: ReminderItem) => {
+    setEditing(item);
+    setFTitle(item.title);
+    setFDesc(item.description);
+    setFType(item.type);
+    setFTimes(item.times);
+    setFTTS(item.ttsMessage);
+    setShowModal(true);
+  };
+
+  const openAdd = () => {
+    setEditing(null);
+    setFTitle(''); setFDesc(''); setFType('medication');
+    setFTimes(['08:00']); setFTTS(''); setFNewTime('');
+    setShowModal(true);
+  };
+
+  const closeModal = () => { setShowModal(false); setEditing(null); };
+
+  const addTime = () => {
+    const t = fNewTime.trim();
+    if (t && /^\d{1,2}:\d{2}$/.test(t) && !fTimes.includes(t)) {
+      setFTimes([...fTimes, t].sort());
+      setFNewTime('');
+    }
+  };
+
+  const removeTime = (t: string) => setFTimes(fTimes.filter(x => x !== t));
+
+  const playTTS = (msg: string) => {
     Tts.setDefaultLanguage('ml-IN');
     Tts.setDefaultRate(0.5);
-    Tts.speak(`${med} ${dosage} കഴിക്കാൻ സമയമായി. മറക്കരുത്.`);
+    Tts.speak(msg);
   };
 
-  // Group by period
-  const morningSlots = medSlots.filter(s => s.period === 'morning');
-  const afternoonSlots = medSlots.filter(s => s.period === 'afternoon');
-  const eveningSlots = medSlots.filter(s => s.period === 'evening');
-
-  const takenCount = medSlots.filter(s => s.status === 'taken').length;
-  const totalCount = medSlots.length;
+  const activeRems = reminders.filter(r => r.isActive);
+  const inactiveRems = reminders.filter(r => !r.isActive);
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
+    <View style={[st.root, { paddingTop: insets.top }]}>
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Medications</Text>
-        <Text style={styles.headerMonth}>{formatMonth(selectedDate)}</Text>
-      </View>
-
-      {/* Week calendar strip (Apple Health style) */}
-      <View style={styles.calendarStrip}>
-        {weekDates.map((d, i) => (
-          <TouchableOpacity
-            key={i}
-            style={[styles.dayCell, d.isToday && styles.dayCellToday, d.date.toDateString() === selectedDate.toDateString() && styles.dayCellSelected]}
-            onPress={() => setSelectedDate(d.date)}>
-            <Text style={[styles.dayName, d.isToday && styles.dayNameToday]}>{d.dayName}</Text>
-            <Text style={[styles.dayNum, d.isToday && styles.dayNumToday, d.date.toDateString() === selectedDate.toDateString() && styles.dayNumSelected]}>
-              {d.dayNum}
-            </Text>
-            {d.isToday && <View style={styles.todayDot} />}
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Progress bar */}
-      {totalCount > 0 && (
-        <View style={styles.progressSection}>
-          <View style={styles.progressBar}>
-            <View style={[styles.progressFill, { width: `${(takenCount / totalCount) * 100}%` }]} />
-          </View>
-          <Text style={styles.progressText}>{takenCount}/{totalCount} taken</Text>
+      <View style={st.header}>
+        <View>
+          <Text style={st.title}>Reminders</Text>
+          <Text style={st.count}>{activeRems.length} active</Text>
         </View>
-      )}
+        <TouchableOpacity style={st.addBtn} onPress={openAdd}>
+          <Text style={st.addBtnText}>+ New</Text>
+        </TouchableOpacity>
+      </View>
 
-      {/* Medication list */}
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
-        {morningSlots.length > 0 && (
-          <PeriodSection title="Morning" icon="🌅" time="8:00 AM" slots={morningSlots} onMark={markMed} onPreview={previewTTS} />
-        )}
-        {afternoonSlots.length > 0 && (
-          <PeriodSection title="Afternoon" icon="☀️" time="2:00 PM" slots={afternoonSlots} onMark={markMed} onPreview={previewTTS} />
-        )}
-        {eveningSlots.length > 0 && (
-          <PeriodSection title="Evening" icon="🌙" time="8:00 PM" slots={eveningSlots} onMark={markMed} onPreview={previewTTS} />
-        )}
-
-        {medSlots.length === 0 && (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>💊</Text>
-            <Text style={styles.emptyTitle}>No medications scheduled</Text>
-            <Text style={styles.emptyText}>Chat-ൽ മരുന്ന് പറഞ്ഞാൽ Thuna automatic ആയി reminder set ചെയ്യും</Text>
+      {/* List */}
+      <ScrollView style={st.list} contentContainerStyle={st.listInner} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#0D7C66']} />}>
+        {activeRems.length === 0 && inactiveRems.length === 0 && (
+          <View style={st.empty}>
+            <Text style={st.emptyIcon}>☆</Text>
+            <Text style={st.emptyTitle}>No reminders</Text>
+            <Text style={st.emptyText}>Tap + New or tell Thuna in chat</Text>
           </View>
+        )}
+
+        {activeRems.map(rem => <ReminderCard key={rem.id} item={rem} onEdit={openEdit} onDelete={handleDelete} onToggle={toggleActive} onPlay={playTTS} />)}
+
+        {inactiveRems.length > 0 && (
+          <>
+            <Text style={st.sectionLabel}>Inactive</Text>
+            {inactiveRems.map(rem => <ReminderCard key={rem.id} item={rem} onEdit={openEdit} onDelete={handleDelete} onToggle={toggleActive} onPlay={playTTS} />)}
+          </>
         )}
       </ScrollView>
-    </View>
-  );
-}
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Period Section Component
-// ═══════════════════════════════════════════════════════════════════════════
-
-function PeriodSection({ title, icon, time, slots, onMark, onPreview }: {
-  title: string; icon: string; time: string;
-  slots: MedSlot[];
-  onMark: (slot: MedSlot, status: 'taken' | 'missed') => void;
-  onPreview: (med: string, dosage: string) => void;
-}) {
-  return (
-    <View style={styles.section}>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionIcon}>{icon}</Text>
-        <Text style={styles.sectionTitle}>{title}</Text>
-        <Text style={styles.sectionTime}>{time}</Text>
-      </View>
-
-      {slots.map(slot => (
-        <View key={slot.id} style={styles.medCard}>
-          <View style={styles.medTop}>
-            <View style={styles.medInfo}>
-              <Text style={styles.medName}>{slot.medication}</Text>
-              <Text style={styles.medDosage}>{slot.dosage} • {slot.time}</Text>
+      {/* Add/Edit Modal */}
+      <Modal visible={showModal} animationType="slide" transparent>
+        <View style={st.overlay}>
+          <ScrollView style={st.modal} contentContainerStyle={st.modalInner} keyboardShouldPersistTaps="handled">
+            <View style={st.modalHead}>
+              <Text style={st.modalTitle}>{editing ? 'Edit' : 'New Reminder'}</Text>
+              <TouchableOpacity onPress={closeModal}><Text style={st.closeBtn}>✕</Text></TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={() => onPreview(slot.medication, slot.dosage)}>
-              <Text style={styles.soundIcon}>🔊</Text>
+
+            {/* Type */}
+            <Text style={st.label}>Type</Text>
+            <View style={st.typeGrid}>
+              {TYPES.map(t => (
+                <TouchableOpacity key={t.id} style={[st.typeItem, fType === t.id && { backgroundColor: t.color + '15', borderColor: t.color }]} onPress={() => setFType(t.id)}>
+                  <Text style={[st.typeItemIcon, { color: t.color }]}>{t.icon}</Text>
+                  <Text style={[st.typeItemLabel, fType === t.id && { color: t.color }]}>{t.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Title */}
+            <Text style={st.label}>Medicine / Title</Text>
+            <TextInput style={st.input} placeholder="What to remind?" value={fTitle} onChangeText={setFTitle} />
+
+            {/* Description */}
+            <Text style={st.label}>Dosage / Details</Text>
+            <TextInput style={st.input} placeholder="e.g. 500mg (optional)" value={fDesc} onChangeText={setFDesc} />
+
+            {/* Times */}
+            <Text style={st.label}>Times</Text>
+            <View style={st.timesWrap}>
+              {fTimes.map(t => (
+                <View key={t} style={st.timeTag}>
+                  <Text style={st.timeTagText}>{t}</Text>
+                  <TouchableOpacity onPress={() => removeTime(t)}><Text style={st.timeTagX}>✕</Text></TouchableOpacity>
+                </View>
+              ))}
+            </View>
+            <View style={st.addTimeRow}>
+              <TextInput style={st.timeInput} placeholder="HH:MM (e.g. 14:30)" value={fNewTime} onChangeText={setFNewTime} keyboardType="numbers-and-punctuation" />
+              <TouchableOpacity style={st.addTimeBtn} onPress={addTime}><Text style={st.addTimeBtnText}>Add</Text></TouchableOpacity>
+            </View>
+
+            {/* TTS Message */}
+            <Text style={st.label}>Voice Message (Malayalam)</Text>
+            <TextInput style={st.input} placeholder="Auto-generated if empty" value={fTTS} onChangeText={setFTTS} />
+            {fTTS ? <TouchableOpacity onPress={() => playTTS(fTTS)} style={st.previewBtn}><Text style={st.previewText}>▶ Preview</Text></TouchableOpacity> : null}
+
+            {/* Save */}
+            <TouchableOpacity style={[st.saveBtn, !fTitle.trim() && st.saveBtnOff]} onPress={handleSave} disabled={!fTitle.trim()}>
+              <Text style={st.saveBtnText}>{editing ? 'Update' : 'Save'}</Text>
             </TouchableOpacity>
-          </View>
-
-          {slot.status === 'pending' || slot.status === 'upcoming' ? (
-            <View style={styles.actionRow}>
-              <TouchableOpacity style={styles.missedBtn} onPress={() => onMark(slot, 'missed')}>
-                <Text style={styles.missedText}>✕ Missed</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.takenBtn} onPress={() => onMark(slot, 'taken')}>
-                <Text style={styles.takenText}>✓ Taken</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={[styles.statusPill, slot.status === 'taken' ? styles.takenPill : styles.missedPill]}>
-              <Text style={styles.statusPillText}>
-                {slot.status === 'taken' ? '✓ Taken' : '✕ Missed'}
-              </Text>
-            </View>
-          )}
+          </ScrollView>
         </View>
-      ))}
+      </Modal>
     </View>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Styles
+// Card Component
 // ═══════════════════════════════════════════════════════════════════════════
 
-const styles = StyleSheet.create({
+function ReminderCard({ item, onEdit, onDelete, onToggle, onPlay }: {
+  item: ReminderItem; onEdit: (i: ReminderItem) => void; onDelete: (i: ReminderItem) => void;
+  onToggle: (id: string) => void; onPlay: (msg: string) => void;
+}) {
+  const typeConfig = TYPES.find(t => t.id === item.type) || TYPES[5];
+
+  return (
+    <View style={[st.card, !item.isActive && st.cardInactive]}>
+      <View style={st.cardRow}>
+        <View style={[st.cardIconWrap, { backgroundColor: typeConfig.color + '15' }]}>
+          <Text style={[st.cardIconText, { color: typeConfig.color }]}>{typeConfig.icon}</Text>
+        </View>
+        <View style={st.cardBody}>
+          <Text style={st.cardTitle}>{item.title}</Text>
+          {item.description ? <Text style={st.cardDesc}>{item.description}</Text> : null}
+          <View style={st.cardMeta}>
+            <Text style={st.cardMetaText}>{item.times.join(', ')} • Daily</Text>
+          </View>
+        </View>
+        <Switch value={item.isActive} onValueChange={() => onToggle(item.id)} trackColor={{ true: '#0D7C66', false: '#E5E7EB' }} thumbColor="#fff" />
+      </View>
+      <View style={st.cardBottom}>
+        <TouchableOpacity onPress={() => onPlay(item.ttsMessage)} style={st.cardBtn}><Text style={st.cardBtnText}>▶ Play</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => onEdit(item)} style={st.cardBtn}><Text style={st.cardBtnText}>✎ Edit</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => onDelete(item)} style={[st.cardBtn, st.cardBtnDanger]}><Text style={[st.cardBtnText, st.cardBtnDangerText]}>✕ Remove</Text></TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+const st = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#FAFBFC' },
-  // Header
-  header: { paddingHorizontal: 24, paddingTop: 16, paddingBottom: 8 },
-  headerTitle: { fontSize: 30, fontWeight: '700', color: '#111827', letterSpacing: -0.5 },
-  headerMonth: { fontSize: 15, color: '#6B7280', marginTop: 4 },
-  // Calendar strip
-  calendarStrip: { flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 12, justifyContent: 'space-between' },
-  dayCell: { alignItems: 'center', paddingVertical: 10, paddingHorizontal: 8, borderRadius: 16, minWidth: 44 },
-  dayCellToday: { backgroundColor: '#F0FDF4' },
-  dayCellSelected: { backgroundColor: '#0D7C66' },
-  dayName: { fontSize: 12, color: '#9CA3AF', fontWeight: '500' },
-  dayNameToday: { color: '#0D7C66' },
-  dayNum: { fontSize: 18, fontWeight: '600', color: '#374151', marginTop: 4 },
-  dayNumToday: { color: '#0D7C66' },
-  dayNumSelected: { color: '#FFFFFF' },
-  todayDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#0D7C66', marginTop: 4 },
-  // Progress
-  progressSection: { paddingHorizontal: 24, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  progressBar: { flex: 1, height: 6, backgroundColor: '#E5E7EB', borderRadius: 3, overflow: 'hidden' },
-  progressFill: { height: '100%', backgroundColor: '#0D7C66', borderRadius: 3 },
-  progressText: { fontSize: 13, color: '#6B7280', fontWeight: '500' },
-  // Content
-  content: { flex: 1 },
-  contentInner: { paddingHorizontal: 20, paddingBottom: 40 },
-  // Section
-  section: { marginBottom: 24 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 8 },
-  sectionIcon: { fontSize: 18 },
-  sectionTitle: { fontSize: 17, fontWeight: '600', color: '#374151', flex: 1 },
-  sectionTime: { fontSize: 13, color: '#9CA3AF' },
-  // Med card
-  medCard: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 18, marginBottom: 10, borderWidth: 1, borderColor: '#F3F4F6' },
-  medTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  medInfo: { flex: 1 },
-  medName: { fontSize: 19, fontWeight: '600', color: '#111827' },
-  medDosage: { fontSize: 14, color: '#6B7280', marginTop: 3 },
-  soundIcon: { fontSize: 22, padding: 4 },
-  // Actions
-  actionRow: { flexDirection: 'row', gap: 12, marginTop: 14 },
-  missedBtn: { flex: 1, height: 52, borderRadius: 26, borderWidth: 2, borderColor: '#E5E7EB', alignItems: 'center', justifyContent: 'center' },
-  missedText: { fontSize: 16, color: '#6B7280', fontWeight: '600' },
-  takenBtn: { flex: 1, height: 52, borderRadius: 26, backgroundColor: '#0D7C66', alignItems: 'center', justifyContent: 'center' },
-  takenText: { fontSize: 16, color: '#FFFFFF', fontWeight: '600' },
-  // Status pill
-  statusPill: { alignSelf: 'flex-start', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, marginTop: 12 },
-  takenPill: { backgroundColor: '#F0FDF4' },
-  missedPill: { backgroundColor: '#FEF2F2' },
-  statusPillText: { fontSize: 14, fontWeight: '600', color: '#374151' },
-  // Empty state
-  emptyState: { alignItems: 'center', paddingTop: 60 },
-  emptyIcon: { fontSize: 48 },
-  emptyTitle: { fontSize: 20, fontWeight: '600', color: '#374151', marginTop: 16 },
-  emptyText: { fontSize: 14, color: '#9CA3AF', marginTop: 8, textAlign: 'center', paddingHorizontal: 40 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: 16, paddingBottom: 12 },
+  title: { fontSize: 28, fontWeight: '700', color: '#111827' },
+  count: { fontSize: 14, color: '#6B7280', marginTop: 2 },
+  addBtn: { backgroundColor: '#0D7C66', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 24 },
+  addBtnText: { fontSize: 15, fontWeight: '600', color: '#fff' },
+  list: { flex: 1 },
+  listInner: { paddingHorizontal: 20, paddingBottom: 40 },
+  sectionLabel: { fontSize: 13, fontWeight: '600', color: '#9CA3AF', marginTop: 20, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 },
+  empty: { alignItems: 'center', paddingTop: 80 },
+  emptyIcon: { fontSize: 48, color: '#D1D5DB' },
+  emptyTitle: { fontSize: 18, fontWeight: '600', color: '#6B7280', marginTop: 12 },
+  emptyText: { fontSize: 14, color: '#9CA3AF', marginTop: 4 },
+  card: { backgroundColor: '#fff', borderRadius: 18, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#F3F4F6' },
+  cardInactive: { opacity: 0.5 },
+  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  cardIconWrap: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  cardIconText: { fontSize: 22 },
+  cardBody: { flex: 1 },
+  cardTitle: { fontSize: 17, fontWeight: '600', color: '#111827' },
+  cardDesc: { fontSize: 13, color: '#6B7280', marginTop: 2 },
+  cardMeta: { marginTop: 4 },
+  cardMetaText: { fontSize: 12, color: '#9CA3AF' },
+  cardBottom: { flexDirection: 'row', gap: 8, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+  cardBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#F5F7FA' },
+  cardBtnText: { fontSize: 13, color: '#374151', fontWeight: '500' },
+  cardBtnDanger: { backgroundColor: '#FEF2F2' },
+  cardBtnDangerText: { color: '#EF4444' },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modal: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '90%' },
+  modalInner: { padding: 24, paddingBottom: 40 },
+  modalHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  modalTitle: { fontSize: 22, fontWeight: '700', color: '#111827' },
+  closeBtn: { fontSize: 22, color: '#9CA3AF', padding: 4 },
+  label: { fontSize: 14, fontWeight: '600', color: '#374151', marginTop: 18, marginBottom: 8 },
+  input: { height: 50, borderWidth: 1.5, borderColor: '#E5E7EB', borderRadius: 14, paddingHorizontal: 16, fontSize: 16, color: '#111827', backgroundColor: '#FAFBFC' },
+  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  typeItem: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, borderWidth: 1.5, borderColor: '#E5E7EB' },
+  typeItemIcon: { fontSize: 16 },
+  typeItemLabel: { fontSize: 13, fontWeight: '500', color: '#6B7280' },
+  timesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  timeTag: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#F0FDF4', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 },
+  timeTagText: { fontSize: 15, fontWeight: '600', color: '#0D7C66' },
+  timeTagX: { fontSize: 14, color: '#6B7280' },
+  addTimeRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  timeInput: { flex: 1, height: 44, borderWidth: 1.5, borderColor: '#E5E7EB', borderRadius: 12, paddingHorizontal: 14, fontSize: 15, color: '#111827' },
+  addTimeBtn: { paddingHorizontal: 18, height: 44, borderRadius: 12, backgroundColor: '#0D7C66', alignItems: 'center', justifyContent: 'center' },
+  addTimeBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  previewBtn: { marginTop: 8, alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: '#F0FDF4' },
+  previewText: { fontSize: 13, color: '#0D7C66', fontWeight: '500' },
+  saveBtn: { marginTop: 28, height: 56, borderRadius: 28, backgroundColor: '#0D7C66', alignItems: 'center', justifyContent: 'center' },
+  saveBtnOff: { backgroundColor: '#D1D5DB' },
+  saveBtnText: { fontSize: 18, fontWeight: '700', color: '#fff' },
 });

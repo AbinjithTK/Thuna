@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, TextInput, PermissionsAndroid, Platform, Image,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { launchCamera } from 'react-native-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,40 +15,44 @@ export default function TriageScreen() {
   const insets = useSafeAreaInsets();
   const {
     agentState, isListening, completion, transcription, error,
-    startVoice, stopVoice, runTriageCycle, reset, _setOnVoiceResult, _setVoiceMode, _setPatientId,
-  } = useCactus() as any;
+    startVoice, stopVoice, runTriageCycle, _setOnVoiceResult, _setPatientId,
+  } = useCactus();
   const { currentUser } = useUser();
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     if (currentUser && _setPatientId) _setPatientId(currentUser.id);
+    return () => { mountedRef.current = false; };
   }, [currentUser]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: '0',
-      text: `Hi ${currentUser?.name || ''}! 👋\nഎന്താ വിശേഷം? ആരോഗ്യ കാര്യങ്ങൾ ചോദിക്കാം, BP/sugar record ചെയ്യാം, മരുന്ന് reminder set ചെയ്യാം.`,
+      text: `${currentUser?.name || ''}, എന്താ വിശേഷം? 😊\n\nആരോഗ്യം, മരുന്ന്, BP/sugar — എന്തും ചോദിക്കാം. അല്ലെങ്കിൽ വെറുതെ സംസാരിക്കാം. ആരെയെങ്കിലും വിളിക്കണോ? ഞാൻ connect ചെയ്യാം.`,
       isUser: false,
       timestamp: Date.now(),
     },
   ]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [textInput, setTextInput] = useState('');
-  const [voiceMode, setVoiceMode] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     if (_setOnVoiceResult) {
       _setOnVoiceResult((text: string) => {
-        if (text.trim() && !isProcessing) processInput(text.trim());
+        if (mountedRef.current && text.trim() && !isProcessing) processInput(text.trim());
       });
     }
   }, [isProcessing]);
 
   const processInput = async (input: string, imagePath?: string) => {
+    if (!mountedRef.current) return;
     setMessages(prev => [...prev, { id: Date.now().toString(), text: input, isUser: true, timestamp: Date.now() }]);
     setIsProcessing(true);
     const result = await runTriageCycle(input, imagePath);
+    if (!mountedRef.current) return;
     setIsProcessing(false);
 
     if (result) {
@@ -78,25 +83,22 @@ export default function TriageScreen() {
   const speakMalayalam = (text: string) => {
     try {
       Tts.setDefaultLanguage('ml-IN');
-      Tts.setDefaultRate(0.5);
-      Tts.removeAllListeners('tts-finish');
-      Tts.addEventListener('tts-finish', () => { if (voiceMode) setTimeout(() => startVoice(), 800); });
+      Tts.setDefaultRate(0.55);
       const clean = text.replace(/[\*\#\-\•\[\]{}]/g, '').replace(/[^\u0D00-\u0D7F\u0020-\u007Ea-zA-Z0-9\n.,!?:;()°%\/]/g, '').replace(/\n+/g, '. ').replace(/\s+/g, ' ').trim();
       if (clean) Tts.speak(clean);
     } catch {}
   };
 
   const handleMicPress = async () => {
-    if (voiceMode) { setVoiceMode(false); if (_setVoiceMode) _setVoiceMode(false); Tts.stop(); stopVoice(); Tts.removeAllListeners('tts-finish'); }
-    else if (isListening) { stopVoice(); }
-    else { await startVoice(); }
+    if (isListening) {
+      stopVoice();
+    } else {
+      await startVoice();
+    }
   };
 
   const handleMicLongPress = async () => {
-    if (voiceMode) return;
-    setVoiceMode(true);
-    if (_setVoiceMode) _setVoiceMode(true);
-    await startVoice();
+    // Disabled — live mode removed for reliability
   };
 
   const handleSend = () => {
@@ -112,12 +114,18 @@ export default function TriageScreen() {
   const handleCamera = async () => {
     if (Platform.OS === 'android') { const g = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA); if (g !== PermissionsAndroid.RESULTS.GRANTED) return; }
     try {
-      const r = await launchCamera({ mediaType: 'photo', maxWidth: 256, maxHeight: 256, quality: 0.3 });
+      const r = await launchCamera({ mediaType: 'photo', maxWidth: 512, maxHeight: 512, quality: 0.4 });
       if (r.didCancel || r.errorCode) return;
       if (r.assets?.[0]?.uri) {
-        setPendingImage(r.assets[0].uri);
-        setMessages(prev => [...prev, { id: Date.now().toString(), text: '📷', isUser: true, timestamp: Date.now(), imagePath: r.assets![0].uri }]);
-        setMessages(prev => [...prev, { id: (Date.now()+1).toString(), text: 'ചിത്രം ചേർത്തു. എന്ത് ചെയ്യണം?', isUser: false, timestamp: Date.now() }]);
+        const uri = r.assets[0].uri;
+        setPendingImage(uri);
+        setMessages(prev => [...prev, { id: Date.now().toString(), text: '📷', isUser: true, timestamp: Date.now(), imagePath: uri }]);
+        setMessages(prev => [...prev, {
+          id: (Date.now()+1).toString(),
+          text: 'ചിത്രം ചേർത്തു.\n\n📋 കുറിപ്പടി സ്കാൻ ചെയ്യാൻ "prescription" എന്ന് ടൈപ്പ് ചെയ്യുക\n🩺 ലക്ഷണം വിവരിക്കാൻ ടൈപ്പ് ചെയ്യുക',
+          isUser: false,
+          timestamp: Date.now(),
+        }]);
       }
     } catch {}
   };
@@ -125,13 +133,13 @@ export default function TriageScreen() {
   const showStatus = isListening || (agentState !== 'ready' && agentState !== 'idle');
 
   return (
-    <View style={[s.root, { paddingBottom: insets.bottom }]}>
+    <KeyboardAvoidingView style={[s.root, { paddingBottom: insets.bottom }]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
       {/* Status indicator */}
       {showStatus && (
         <View style={[s.statusBar, isListening && s.statusListening]}>
           {!isListening && <ActivityIndicator size="small" color="#0D7C66" />}
           <Text style={s.statusText}>
-            {isListening ? '● Listening...' : agentState === 'thinking' ? 'Thinking...' : agentState === 'calling_tool' ? 'Processing...' : 'Generating...'}
+            {isListening ? '● കേൾക്കുന്നു...' : agentState === 'thinking' ? '🧠 ചിന്തിക്കുന്നു...' : agentState === 'calling_tool' ? '⚙️ പ്രോസസ്സ്...' : '💬 തയ്യാറാക്കുന്നു...'}
           </Text>
           {isListening && transcription ? <Text style={s.liveText}>{transcription}</Text> : null}
         </View>
@@ -161,14 +169,37 @@ export default function TriageScreen() {
 
       {/* Input bar */}
       <View style={s.inputContainer}>
-        {pendingImage && <View style={s.attachBadge}><Text style={s.attachText}>📎 Image attached</Text></View>}
+        {pendingImage && <View style={s.attachBadge}><Text style={s.attachText}>📎 ചിത്രം ചേർത്തു</Text></View>}
+
+        {/* Quick action chips — elderly-friendly shortcuts */}
+        {!isProcessing && !isListening && !textInput.trim() && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipsRow} contentContainerStyle={s.chipsContent}>
+            <TouchableOpacity style={s.chip} onPress={() => setTextInput('BP ')}>
+              <Text style={s.chipText}>❤️ BP</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.chip} onPress={() => setTextInput('sugar ')}>
+              <Text style={s.chipText}>🩸 ഷുഗർ</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.chip} onPress={() => processInput('took medicine')}>
+              <Text style={s.chipText}>💊 കഴിച്ചു</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.chip} onPress={() => processInput('my medicines')}>
+              <Text style={s.chipText}>📋 മരുന്നുകൾ</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.chip} onPress={handleCamera}>
+              <Text style={s.chipText}>📷 കുറിപ്പടി</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        )}
+
         <View style={s.inputRow}>
-          <TextInput style={s.input} placeholder="Message Thuna..." placeholderTextColor="#B0B0B0" value={textInput} onChangeText={setTextInput} onSubmitEditing={handleSend} editable={!isProcessing && !isListening} />
+          <TextInput style={s.input} placeholder="തുണയോട് പറയുക..." placeholderTextColor="#B0B0B0" value={textInput} onChangeText={setTextInput} onSubmitEditing={handleSend} editable={!isProcessing && !isListening} />
           {textInput.trim() ? (
             <TouchableOpacity style={s.sendBtn} onPress={handleSend}><Text style={s.btnEmoji}>↑</Text></TouchableOpacity>
           ) : (
-            <TouchableOpacity style={[s.micBtn, isListening && s.micActive, voiceMode && s.micVoice]} onPress={handleMicPress} onLongPress={handleMicLongPress} disabled={isProcessing}>
-              <Text style={s.btnEmoji}>{voiceMode ? '●' : isListening ? '■' : '🎤'}</Text>
+            <TouchableOpacity style={[s.micBtn, isListening && s.micActive]} onPress={handleMicPress} disabled={isProcessing}>
+              <Text style={s.micEmoji}>{isListening ? '■' : '🎤'}</Text>
+              <Text style={s.micLabel}>{isListening ? 'നിർത്തുക' : 'പറയുക'}</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity style={s.camBtn} onPress={handleCamera} disabled={isProcessing || isListening}>
@@ -176,7 +207,7 @@ export default function TriageScreen() {
           </TouchableOpacity>
         </View>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -185,6 +216,8 @@ const s = StyleSheet.create({
   // Status
   statusBar: { paddingVertical: 10, paddingHorizontal: 20, backgroundColor: '#F0FDF4', flexDirection: 'row', alignItems: 'center', gap: 8 },
   statusListening: { backgroundColor: '#FEF2F2' },
+  voiceModeBanner: { paddingVertical: 12, paddingHorizontal: 20, backgroundColor: '#D97706', alignItems: 'center' },
+  voiceModeText: { fontSize: 14, fontWeight: '600', color: '#fff' },
   statusText: { fontSize: 14, fontWeight: '500', color: '#0D7C66' },
   liveText: { fontSize: 15, color: '#374151', fontStyle: 'italic', marginTop: 2 },
   // Chat
@@ -197,19 +230,25 @@ const s = StyleSheet.create({
   bubble: { maxWidth: '78%', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 20 },
   userBubble: { backgroundColor: '#0D7C66', borderBottomRightRadius: 6 },
   agentBubble: { backgroundColor: '#FFFFFF', borderBottomLeftRadius: 6, borderWidth: 1, borderColor: '#F0F0F0' },
-  msgText: { fontSize: 16, lineHeight: 24, color: '#1F2937', letterSpacing: 0.2 },
+  msgText: { fontSize: 17, lineHeight: 26, color: '#1F2937', letterSpacing: 0.2 },
   userMsgText: { color: '#FFFFFF' },
   msgImage: { width: 160, height: 160, borderRadius: 12, marginBottom: 6 },
   // Input
   inputContainer: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#F0F0F0' },
   attachBadge: { backgroundColor: '#F0FDF4', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 8, marginBottom: 6, alignSelf: 'flex-start' },
   attachText: { fontSize: 12, color: '#0D7C66' },
+  chipsRow: { marginBottom: 8, maxHeight: 40 },
+  chipsContent: { paddingHorizontal: 4, gap: 8, flexDirection: 'row' },
+  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#D1FAE5' },
+  chipText: { fontSize: 14, color: '#065A4A', fontWeight: '500' },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   input: { flex: 1, height: 48, backgroundColor: '#F5F7FA', borderRadius: 24, paddingHorizontal: 20, fontSize: 16, color: '#1F2937' },
   sendBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#0D7C66', alignItems: 'center', justifyContent: 'center' },
-  micBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#F5F7FA', alignItems: 'center', justifyContent: 'center' },
-  micActive: { backgroundColor: '#FEE2E2' },
-  micVoice: { backgroundColor: '#FEF3C7' },
+  micBtn: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#0D7C66', alignItems: 'center', justifyContent: 'center' },
+  micActive: { backgroundColor: '#DC2626' },
+  micVoice: { backgroundColor: '#D97706' },
+  micEmoji: { fontSize: 22 },
+  micLabel: { fontSize: 9, color: '#fff', marginTop: 1 },
   camBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#F5F7FA', alignItems: 'center', justifyContent: 'center' },
   btnEmoji: { fontSize: 20 },
 });

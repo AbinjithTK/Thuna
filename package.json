@@ -12,6 +12,7 @@
   "dependencies": {
     "@appcitor/react-native-voice-to-text": "^0.2.1",
     "@babel/plugin-proposal-decorators": "^7.29.0",
+    "@notifee/react-native": "^9.1.8",
     "@nozbe/watermelondb": "^0.28.0",
     "@nozbe/with-observables": "^1.6.0",
     "@react-native-async-storage/async-storage": "^1.23.1",
@@ -30,7 +31,8 @@
     "react-native-safe-area-context": "^5.7.0",
     "react-native-screens": "^4.25.0",
     "react-native-tab-view": "^4.3.0",
-    "react-native-tts": "^4.1.1"
+    "react-native-tts": "^4.1.1",
+    "react-native-vector-icons": "^10.3.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

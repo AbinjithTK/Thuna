@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'rea
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCactus } from '../context/CactusContext';
 import { useUser } from '../context/UserContext';
-import { colors, spacing, radius, fontSize, shadow } from '../theme';
+import { colors, spacing, radius, typography, shadow } from '../theme';
 
 export default function HomeScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
@@ -22,17 +22,17 @@ export default function HomeScreen({ navigation }: any) {
       <View style={styles.header}>
         <View>
           <Text style={styles.greeting}>നമസ്കാരം,</Text>
-          <Text style={styles.userName}>{currentUser?.name || 'User'} 👋</Text>
+          <Text style={styles.userName}>{currentUser?.name || 'User'}</Text>
         </View>
         <TouchableOpacity style={styles.logoutBtn} onPress={logout}>
-          <Text style={styles.logoutText}>🔄</Text>
+          <Text style={{ fontSize: 20 }}>🔄</Text>
         </TouchableOpacity>
       </View>
 
       {/* Main content */}
       <View style={styles.content}>
         <View style={styles.logoCircle}>
-          <Text style={styles.logoEmoji}>🤝</Text>
+          <Text style={{ fontSize: 56 }}>🤝</Text>
         </View>
         <Text style={styles.title}>Thuna</Text>
         <Text style={styles.subtitle}>നിങ്ങളുടെ ആരോഗ്യ തുണ</Text>
@@ -54,14 +54,20 @@ export default function HomeScreen({ navigation }: any) {
 
         {agentState === 'ready' && (
           <>
+            {/* Airplane mode / Offline badge */}
+            <View style={styles.offlineBadge}>
+              <Text style={{ fontSize: 14 }}>✈️</Text>
+              <Text style={styles.offlineBadgeText}>100% Offline — No Internet Required</Text>
+            </View>
+
             <View style={styles.statusRow}>
               <View style={styles.statusChip}>
-                <Text style={styles.statusDot}>🟢</Text>
-                <Text style={styles.statusLabel}>Gemma 4 Ready</Text>
+                <Text style={{ fontSize: 12 }}>✅</Text>
+                <Text style={styles.statusLabel}>Gemma 4 E2B</Text>
               </View>
               <View style={styles.statusChip}>
-                <Text style={styles.statusDot}>🟢</Text>
-                <Text style={styles.statusLabel}>Offline Mode</Text>
+                <Text style={{ fontSize: 12 }}>✅</Text>
+                <Text style={styles.statusLabel}>Cactus v1.7</Text>
               </View>
             </View>
 
@@ -74,7 +80,8 @@ export default function HomeScreen({ navigation }: any) {
 
         {agentState === 'error' && (
           <View style={styles.errorCard}>
-            <Text style={styles.errorText}>⚠️ {error}</Text>
+            <Text style={{ fontSize: 24 }}>⚠️</Text>
+            <Text style={styles.errorText}>{error}</Text>
             <TouchableOpacity style={styles.retryBtn} onPress={initialize}>
               <Text style={styles.retryBtnText}>വീണ്ടും ശ്രമിക്കുക</Text>
             </TouchableOpacity>
@@ -88,24 +95,22 @@ export default function HomeScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: spacing.xl },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 40 },
-  greeting: { fontSize: fontSize.md, color: colors.textSecondary },
-  userName: { fontSize: fontSize.xxl, fontWeight: '700', color: colors.textPrimary },
+  greeting: { ...typography.caption, color: colors.textSecondary },
+  userName: { ...typography.h1, color: colors.textPrimary },
   logoutBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.bgSecondary, alignItems: 'center', justifyContent: 'center' },
-  logoutText: { fontSize: 20 },
   content: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   logoCircle: {
     width: 120, height: 120, borderRadius: 60,
     backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center',
     ...shadow.lg,
   },
-  logoEmoji: { fontSize: 56 },
-  title: { fontSize: fontSize.hero, fontWeight: '800', color: colors.primary, marginTop: spacing.lg },
-  subtitle: { fontSize: fontSize.lg, color: colors.textSecondary, marginTop: spacing.xs },
+  title: { ...typography.hero, color: colors.primary, marginTop: spacing.lg },
+  subtitle: { ...typography.h3, color: colors.textSecondary, marginTop: spacing.xs, fontWeight: '400' },
   loadingCard: {
     marginTop: 40, width: '100%', padding: spacing.xl,
     backgroundColor: colors.bgSecondary, borderRadius: radius.lg, alignItems: 'center',
   },
-  loadingText: { fontSize: fontSize.md, color: colors.textSecondary, marginTop: spacing.md },
+  loadingText: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.md },
   progressBar: { width: '100%', height: 8, backgroundColor: colors.border, borderRadius: 4, marginTop: spacing.md, overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 4 },
   statusRow: { flexDirection: 'row', gap: spacing.md, marginTop: 30 },
@@ -114,20 +119,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
     backgroundColor: colors.primaryLight, borderRadius: radius.full,
   },
-  statusDot: { fontSize: 10 },
-  statusLabel: { fontSize: fontSize.sm, color: colors.primaryDark, fontWeight: '600' },
+  statusLabel: { ...typography.buttonSmall, color: colors.primaryDark },
+  offlineBadge: {
+    marginTop: 24, flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm + 4,
+    backgroundColor: '#FEF3C7', borderRadius: radius.full, borderWidth: 1, borderColor: '#FDE68A',
+  },
+  offlineBadgeText: { ...typography.buttonSmall, color: '#92400E' },
   startBtn: {
     marginTop: 40, width: '100%', height: 80, borderRadius: radius.xl,
     backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
     ...shadow.lg,
   },
-  startBtnText: { fontSize: fontSize.xxl, fontWeight: '700', color: '#fff' },
-  startBtnSub: { fontSize: fontSize.sm, color: 'rgba(255,255,255,0.7)', marginTop: 2 },
+  startBtnText: { ...typography.h2, color: '#fff', marginTop: 4 },
+  startBtnSub: { ...typography.small, color: 'rgba(255,255,255,0.7)', marginTop: 2 },
   errorCard: {
     marginTop: 30, width: '100%', padding: spacing.xl,
-    backgroundColor: '#FEF2F2', borderRadius: radius.lg, alignItems: 'center',
+    backgroundColor: '#FEF2F2', borderRadius: radius.lg, alignItems: 'center', gap: 8,
   },
-  errorText: { fontSize: fontSize.md, color: colors.danger, textAlign: 'center' },
+  errorText: { ...typography.caption, color: colors.danger, textAlign: 'center' },
   retryBtn: { marginTop: spacing.md, paddingHorizontal: spacing.xl, paddingVertical: spacing.md, backgroundColor: colors.danger, borderRadius: radius.full },
-  retryBtnText: { fontSize: fontSize.md, fontWeight: '600', color: '#fff' },
+  retryBtnText: { ...typography.button, color: '#fff' },
 });

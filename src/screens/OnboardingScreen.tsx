@@ -22,7 +22,6 @@ interface Props {
 }
 
 const STEPS = [
-  { key: 'name', question: 'നിങ്ങളുടെ പേര് എന്താണ്?', placeholder: 'Full name', icon: '👤' },
   { key: 'age', question: 'പ്രായം എത്ര?', placeholder: 'Age (e.g. 45)', icon: '🎂', keyboardType: 'numeric' },
   { key: 'gender', question: 'ലിംഗം?', placeholder: '', icon: '⚧️', type: 'choice', options: ['Male', 'Female', 'Other'] },
   { key: 'village', question: 'ഏത് സ്ഥലത്താണ് താമസം?', placeholder: 'Village/Town', icon: '🏘️' },

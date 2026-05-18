@@ -10,11 +10,17 @@ export type Intent =
   | { type: 'add_condition'; data: ConditionData }
   | { type: 'add_lab_result'; data: LabResultData }
   | { type: 'set_reminder'; data: ReminderData }
+  | { type: 'stop_medication'; medication: string }
+  | { type: 'stop_reminder'; medication: string }
   | { type: 'query_medications'; patientId: string }
   | { type: 'query_conditions'; patientId: string }
   | { type: 'query_reminders'; patientId: string }
   | { type: 'query_vitals'; patientId: string; vitalType?: string }
+  | { type: 'query_lab_results'; patientId: string }
+  | { type: 'query_adherence'; patientId: string }
+  | { type: 'query_today_doses'; patientId: string }
   | { type: 'mark_taken'; medication: string }
+  | { type: 'update_profile'; field: string; value: string }
   | { type: 'symptom_report'; symptoms: string }
   | { type: 'general_chat'; text: string };
 
@@ -71,6 +77,11 @@ const MEDICATIONS = [
   'clopidogrel', 'warfarin', 'levothyroxine', 'prednisolone',
   'salbutamol', 'budesonide', 'montelukast', 'folic acid',
   'calcium', 'vitamin d', 'iron', 'b12', 'multivitamin',
+  'atenolol', 'ramipril', 'sitagliptin', 'pioglitazone', 'rosuvastatin',
+  'lisinopril', 'enalapril', 'vildagliptin', 'gliclazide', 'voglibose',
+  'rabeprazole', 'domperidone', 'ondansetron', 'loperamide', 'doxycycline',
+  'ciprofloxacin', 'norfloxacin', 'fluconazole', 'aceclofenac', 'diclofenac',
+  'tramadol', 'gabapentin', 'pregabalin', 'duloxetine', 'sertraline',
   'പാരസെറ്റമോൾ', 'അമോക്സിസിലിൻ', 'മെറ്റ്ഫോർമിൻ', 'ഇൻസുലിൻ',
 ];
 
@@ -93,15 +104,15 @@ const DOSAGE_PATTERN = /(\d+\.?\d*)\s*(mg|ml|mcg|g|iu|units?|tablet|tab|cap|caps
 // ═══════════════════════════════════════════════════════════════════════════
 
 const VITAL_PATTERNS: Array<{ pattern: RegExp; type: string; unit: string; extractFn: (match: RegExpMatchArray) => { primary: number; secondary: number; context: string } }> = [
-  // Blood Pressure: "BP 130/85", "130 by 85", "bp 130 over 85"
+  // Blood Pressure: "BP 130/85", "130 by 85", "bp 130 over 85", "ബിപി 130 85", "രക്തസമ്മർദ്ദം 140/90"
   {
-    pattern: /(?:bp|blood\s*pressure|ബിപി|രക്തസമ്മർദ്ദം)\s*:?\s*(\d{2,3})\s*[\/\-by over]\s*(\d{2,3})/i,
+    pattern: /(?:bp|blood\s*pressure|ബിപി|രക്തസമ്മർദ്ദം|pressure)\s*:?\s*(\d{2,3})\s*[\/\-by over,\s]\s*(\d{2,3})/i,
     type: 'bp', unit: 'mmHg',
     extractFn: (m) => ({ primary: parseInt(m[1]), secondary: parseInt(m[2]), context: '' }),
   },
-  // Also match standalone "130/85" or "130/80 bp"
+  // Standalone "130/85" or "130/80 bp" or "ഇന്ന് 130/90"
   {
-    pattern: /(\d{2,3})\s*\/\s*(\d{2,3})\s*(?:mmhg|bp|ബിപി)?/i,
+    pattern: /(\d{2,3})\s*\/\s*(\d{2,3})\s*(?:mmhg|bp|ബിപി|ആണ്)?/i,
     type: 'bp', unit: 'mmHg',
     extractFn: (m) => {
       const sys = parseInt(m[1]), dia = parseInt(m[2]);
@@ -109,14 +120,21 @@ const VITAL_PATTERNS: Array<{ pattern: RegExp; type: string; unit: string; extra
       return { primary: 0, secondary: 0, context: '' };
     },
   },
-  // Blood Sugar: "sugar 145", "fasting sugar 110", "pp sugar 180", "glucose 145"
+  // Blood Sugar: "sugar 145", "ഷുഗർ 180", "പഞ്ചസാര 145", "ഇന്ന് sugar 200", "fasting 110"
   {
-    pattern: /(?:sugar|glucose|ഷുഗർ|രക്തത്തിലെ\s*പഞ്ചസാര)\s*:?\s*(\d{2,3})/i,
+    pattern: /(?:sugar|glucose|ഷുഗർ|പഞ്ചസാര|രക്തത്തിലെ\s*പഞ്ചസാര|fasting|pp)\s*:?\s*(\d{2,3})/i,
     type: 'sugar', unit: 'mg/dL',
     extractFn: (m) => ({
       primary: parseInt(m[1]), secondary: 0,
-      context: /fasting|ഫാസ്റ്റിംഗ്|empty/i.test(m.input || '') ? 'fasting' : /pp|post|after\s*food/i.test(m.input || '') ? 'post-meal' : 'random',
+      context: /fasting|ഫാസ്റ്റിംഗ്|empty|വെറും\s*വയറ്/i.test(m.input || '') ? 'fasting' : /pp|post|after\s*food|ഭക്ഷണ.*ശേഷം/i.test(m.input || '') ? 'post-meal' : 'random',
     }),
+  },
+  // Also catch "ഷുഗർ ഇന്ന് 180 ആണ്" — number after context
+  {
+    pattern: /(\d{2,3})\s*(?:ആണ്|anu|aayi)?\s*(?:sugar|ഷുഗർ|പഞ്ചസാര)/i,
+    type: 'sugar', unit: 'mg/dL',
+    extractFn: (m) => ({ primary: parseInt(m[1]), secondary: 0, context: 'random' }),
+  },
   },
   // SpO2: "oxygen 96", "spo2 95", "saturation 97"
   {
@@ -184,7 +202,7 @@ const CONDITIONS: Array<{ keywords: RegExp; name: string; icd: string }> = [
   { keywords: /heart|cardiac|ഹൃദയം/i, name: 'Heart Disease', icd: 'I25' },
   { keywords: /copd|ശ്വാസകോശ/i, name: 'COPD', icd: 'J44' },
   { keywords: /anemia|രക്തക്കുറവ്/i, name: 'Anemia', icd: 'D50' },
-  { keywords: /migraine|തലവേദന/i, name: 'Migraine', icd: 'G43' },
+  { keywords: /migraine|headache|തലവേദന/i, name: 'Migraine', icd: 'G43' },
   { keywords: /depression|വിഷാദം/i, name: 'Depression', icd: 'F32' },
 ];
 
@@ -193,77 +211,179 @@ const CONDITIONS: Array<{ keywords: RegExp; name: string; icd: string }> = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function parseIntent(input: string): Intent {
+  // Input sanitization
+  if (!input || typeof input !== 'string') return { type: 'general_chat', text: '' };
+  if (input.length > 2000) input = input.slice(0, 2000);
+  
   const lower = input.toLowerCase();
 
-  // ── Query intents ──
-  if (/what.*medication|my.*med|medicine.*taking|മരുന്ന്.*എന്ത|show.*med/i.test(input)) {
-    return { type: 'query_medications', patientId: 'default' };
-  }
-  if (/what.*condition|my.*disease|health.*issue|രോഗ.*എന്ത|condition/i.test(input)) {
-    return { type: 'query_conditions', patientId: 'default' };
-  }
-  if (/reminder|alarm|when.*take|എപ്പോൾ.*കഴിക്ക|ഓർമ്മ/i.test(input)) {
-    return { type: 'query_reminders', patientId: 'default' };
-  }
-  if (/vitals?|readings?|bp.*history|sugar.*history|my.*bp|my.*sugar/i.test(input)) {
-    let vitalType: string | undefined;
-    if (/bp|pressure/i.test(input)) vitalType = 'bp';
-    if (/sugar|glucose/i.test(input)) vitalType = 'sugar';
-    if (/spo2|oxygen/i.test(input)) vitalType = 'spo2';
-    return { type: 'query_vitals', patientId: 'default', vitalType };
-  }
-  if (/took|taken|കഴിച്ചു|എടുത്തു/i.test(input)) {
-    const med = MEDICATIONS.find(m => lower.includes(m.toLowerCase()));
-    if (med) return { type: 'mark_taken', medication: med };
+  // ═══════════════════════════════════════════════════════════════════════
+  // PRIORITY 1: "Did I take medicine today?" — most common elderly question
+  // ═══════════════════════════════════════════════════════════════════════
+  if (/did i take|did i have|കഴിച്ചോ|എടുത്തോ|ഇന്ന്.*മരുന്ന്|today.*medicine|already.*took|ഇന്ന്.*കഴിച്ച|മരുന്ന്.*കഴിച്ചോ|ഗുളിക.*കഴിച്ചോ|tablet.*കഴിച്ചോ|ഇന്ന്.*എടുത്തോ/i.test(input)) {
+    return { type: 'query_today_doses', patientId: 'default' };
   }
 
-  // ── Vital recording ──
+  // ═══════════════════════════════════════════════════════════════════════
+  // PRIORITY 2: Mark medicine as taken — "കഴിച്ചു", "took metformin"
+  // ═══════════════════════════════════════════════════════════════════════
+  if (/took|taken|കഴിച്ചു|എടുത്തു|had my|മരുന്ന്\s*കഴിച്ചു|ഗുളിക\s*കഴിച്ചു|tablet\s*കഴിച്ചു|medicine\s*കഴിച്ചു/i.test(input) && !/did|ചോ\?|ഓ\?|കഴിച്ചോ/i.test(input)) {
+    const med = MEDICATIONS.find(m => lower.includes(m.toLowerCase()));
+    if (med) return { type: 'mark_taken', medication: med };
+    if (/medicine|med|tablet|മരുന്ന്|ഗുളിക|ടാബ്ലറ്റ്/i.test(input)) {
+      return { type: 'mark_taken', medication: 'medicine' };
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PRIORITY 3: Vital recording — numbers with context (BP 130/90, sugar 180)
+  // ═══════════════════════════════════════════════════════════════════════
   for (const vp of VITAL_PATTERNS) {
     const match = input.match(vp.pattern);
     if (match) {
       const extracted = vp.extractFn(match);
       if (extracted.primary > 0) {
-        return {
-          type: 'add_vital',
-          data: { type: vp.type, primary: extracted.primary, secondary: extracted.secondary, unit: vp.unit, context: extracted.context },
-        };
+        return { type: 'add_vital', data: { type: vp.type, primary: extracted.primary, secondary: extracted.secondary, unit: vp.unit, context: extracted.context } };
       }
     }
   }
 
-  // ── Lab results ──
+  // ═══════════════════════════════════════════════════════════════════════
+  // PRIORITY 4: Reminder — broad detection for any scheduling request
+  // ═══════════════════════════════════════════════════════════════════════
+  const hasReminderWord = /remind|ഓർമ്മ|alarm|അലാറം|schedule|notify|alert|set.*time|timer/i.test(input);
+  const hasTimeWord = /\d\s*(am|pm|മണി|o'clock)|morning|evening|night|afternoon|tomorrow|രാവിലെ|വൈകുന്നേരം|രാത്രി|ഉച്ച|നാളെ/i.test(input);
+  const hasActionWord = /need to|have to|should|want to|don't forget|must|വേണം|കഴിക്കണം|ചെയ്യണം|പോകണം|എടുക്കണം|മറക്കരുത്/i.test(input);
+  const isQueryingReminders = /show|list|what.*reminder|my.*reminder|എന്റെ.*ഓർമ്മ|how many/i.test(input);
+
+  if ((hasReminderWord || (hasTimeWord && hasActionWord)) && !isQueryingReminders) {
+    const timeMatch = input.match(/(\d{1,2}):(\d{2})\s*(am|pm|AM|PM)?/);
+    const hourMatch = input.match(/(\d{1,2})\s*(am|pm|AM|PM|മണി|o'clock)/i);
+    const plainNumMatch = input.match(/at\s*(\d{1,2})/i);
+    let times = ['08:00'];
+
+    if (timeMatch) {
+      let h = parseInt(timeMatch[1]);
+      const m = parseInt(timeMatch[2]);
+      if (timeMatch[3] && /pm/i.test(timeMatch[3]) && h < 12) h += 12;
+      if (timeMatch[3] && /am/i.test(timeMatch[3]) && h === 12) h = 0;
+      times = [`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`];
+    } else if (hourMatch) {
+      let h = parseInt(hourMatch[1]);
+      if (/pm/i.test(hourMatch[2]) && h < 12) h += 12;
+      if (/am/i.test(hourMatch[2]) && h === 12) h = 0;
+      times = [`${h.toString().padStart(2, '0')}:00`];
+    } else if (plainNumMatch) {
+      let h = parseInt(plainNumMatch[1]);
+      if (h <= 6) h += 12; // "at 6" likely means 6pm not 6am
+      times = [`${h.toString().padStart(2, '0')}:00`];
+    } else if (/morning|രാവിലെ/i.test(input)) { times = ['08:00']; }
+    else if (/evening|വൈകുന്നേരം/i.test(input)) { times = ['18:00']; }
+    else if (/night|രാത്രി/i.test(input)) { times = ['21:00']; }
+    else if (/afternoon|ഉച്ച/i.test(input)) { times = ['14:00']; }
+
+    // Extract title — remove all the trigger words, keep the actual task
+    let title = input
+      .replace(/remind.*me.*to|remind me|set.*remind|set.*alarm|ഓർമ്മിപ്പിക്ക|ഓർമ്മിപ്പിക്കണം|remind|reminder|alarm|please|at|in the|need to|have to|should|want to|don't forget|must/gi, '')
+      .replace(/\d{1,2}:\d{2}\s*(am|pm)?/gi, '')
+      .replace(/\d{1,2}\s*(am|pm|മണി|o'clock)/gi, '')
+      .replace(/at\s*\d+/gi, '')
+      .replace(/morning|evening|night|afternoon|tomorrow|രാവിലെ|വൈകുന്നേരം|രാത്രി|ഉച്ച|നാളെ/gi, '')
+      .replace(/വേണം|കഴിക്കണം|ചെയ്യണം|പോകണം|എടുക്കണം|മറക്കരുത്/gi, '')
+      .replace(/to\s+/gi, '')
+      .trim();
+    if (!title || title.length < 2) title = 'Reminder';
+
+    return { type: 'set_reminder', data: { medication: title, dosage: '', times, durationDays: 30, ttsMessage: `${title} — സമയമായി` } };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PRIORITY 5: Stop medication/reminder
+  // ═══════════════════════════════════════════════════════════════════════
+  if (/stop.*med|remove.*med|discontinue|നിർത്ത.*മരുന്ന്|മരുന്ന്.*നിർത്ത|no more/i.test(input)) {
+    const med = MEDICATIONS.find(m => lower.includes(m.toLowerCase()));
+    if (med) return { type: 'stop_medication', medication: med };
+  }
+  if (/stop.*remind|cancel.*remind|remove.*remind|delete.*remind|റിമൈൻഡർ.*നിർത്ത|alarm.*off/i.test(input)) {
+    const med = MEDICATIONS.find(m => lower.includes(m.toLowerCase()));
+    return { type: 'stop_reminder', medication: med || '' };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PRIORITY 6: Lab results
+  // ═══════════════════════════════════════════════════════════════════════
   for (const lp of LAB_PATTERNS) {
     const match = input.match(lp.pattern);
     if (match && match[1]) {
-      return {
-        type: 'add_lab_result',
-        data: { testName: lp.testName, value: parseFloat(match[1]), unit: lp.unit, refLow: lp.refLow, refHigh: lp.refHigh },
-      };
+      return { type: 'add_lab_result', data: { testName: lp.testName, value: parseFloat(match[1]), unit: lp.unit, refLow: lp.refLow, refHigh: lp.refHigh } };
     }
   }
 
-  // ── Medication addition ──
+  // ═══════════════════════════════════════════════════════════════════════
+  // PRIORITY 7: Medication addition (needs medicine name + dosage)
+  // ═══════════════════════════════════════════════════════════════════════
   const medMatch = MEDICATIONS.find(med => lower.includes(med.toLowerCase()));
   if (medMatch && DOSAGE_PATTERN.test(input)) {
     return { type: 'add_medication', data: extractMedication(input, medMatch) };
   }
 
-  // ── Condition addition ──
+  // ═══════════════════════════════════════════════════════════════════════
+  // PRIORITY 8: Condition addition ("I have diabetes")
+  // ═══════════════════════════════════════════════════════════════════════
   for (const cond of CONDITIONS) {
-    if (cond.keywords.test(input) && /have|diagnosed|i have|എനിക്ക്|ഉണ്ട്/i.test(input)) {
-      return {
-        type: 'add_condition',
-        data: { name: cond.name, severity: /severe|serious|ഗുരുതര/i.test(input) ? 'severe' : 'moderate', icdCode: cond.icd },
-      };
+    if (cond.keywords.test(input) && /have|diagnosed|i have|എനിക്ക്|ഉണ്ട്|ആണ്|രോഗം|disease|problem/i.test(input)) {
+      return { type: 'add_condition', data: { name: cond.name, severity: /severe|serious|ഗുരുതര|കഠിനം/i.test(input) ? 'severe' : 'moderate', icdCode: cond.icd } };
     }
   }
 
-  // ── Symptom keywords ──
-  if (/fever|cough|pain|headache|vomit|diarr|rash|breathing|dizz|nausea|പനി|ചുമ|വേദന|ഛർദ്ദി|തലവേദന|ശ്വാസം/i.test(input)) {
+  // ═══════════════════════════════════════════════════════════════════════
+  // PRIORITY 9: Queries (read data back) — Malayalam + English
+  // ═══════════════════════════════════════════════════════════════════════
+  if (/what.*medication|my.*med|medicine.*taking|മരുന്ന്.*എന്ത|show.*med|എന്റെ.*മരുന്ന്|എന്ത്.*മരുന്ന്|ഏത്.*മരുന്ന്|മരുന്ന്.*ലിസ്റ്റ്|medicine.*list/i.test(input)) {
+    return { type: 'query_medications', patientId: 'default' };
+  }
+  if (/what.*condition|my.*disease|health.*issue|രോഗ.*എന്ത|condition|എന്റെ.*രോഗ|എന്ത്.*രോഗം|ആരോഗ്യ.*പ്രശ്നം|disease/i.test(input)) {
+    return { type: 'query_conditions', patientId: 'default' };
+  }
+  if (/my.*reminder|show.*reminder|list.*reminder|what.*reminder|എന്റെ.*ഓർമ്മ|when.*take|എപ്പോൾ.*കഴിക്ക|ഓർമ്മ.*ലിസ്റ്റ്|reminder.*list/i.test(input)) {
+    return { type: 'query_reminders', patientId: 'default' };
+  }
+  if (/vitals?|readings?|bp.*history|sugar.*history|my.*bp|my.*sugar|എന്റെ.*bp|എന്റെ.*ഷുഗർ|ബിപി.*എത്ര|ഷുഗർ.*എത്ര|രക്തസമ്മർദ്ദം|പഞ്ചസാര/i.test(input)) {
+    let vitalType: string | undefined;
+    if (/bp|pressure|ബിപി|രക്തസമ്മർദ്ദം/i.test(input)) vitalType = 'bp';
+    if (/sugar|glucose|ഷുഗർ|പഞ്ചസാര/i.test(input)) vitalType = 'sugar';
+    if (/spo2|oxygen|ഓക്സിജൻ/i.test(input)) vitalType = 'spo2';
+    return { type: 'query_vitals', patientId: 'default', vitalType };
+  }
+  if (/lab.*result|test.*result|report|ടെസ്റ്റ്.*റിസൾട്ട്|ലാബ്|പരിശോധന.*ഫലം|blood.*test/i.test(input)) {
+    return { type: 'query_lab_results', patientId: 'default' };
+  }
+  if (/adherence|compliance|how.*regular|എത്ര.*കഴിച്ചു|track|മരുന്ന്.*മുടങ്ങി|regular.*ആയി/i.test(input)) {
+    return { type: 'query_adherence', patientId: 'default' };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PRIORITY 10: Profile updates
+  // ═══════════════════════════════════════════════════════════════════════
+  if (/my.*age.*is|i am.*years|എന്റെ.*പ്രായം/i.test(input)) {
+    const ageMatch = input.match(/(\d{1,3})\s*(?:years?|yrs?|വയസ്സ്)?/i);
+    if (ageMatch) return { type: 'update_profile', field: 'age', value: ageMatch[1] };
+  }
+  if (/blood.*group|രക്ത.*ഗ്രൂപ്പ്/i.test(input)) {
+    const bgMatch = input.match(/(A|B|AB|O)[+-]/i);
+    if (bgMatch) return { type: 'update_profile', field: 'bloodGroup', value: bgMatch[0].toUpperCase() };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PRIORITY 11: Symptoms (save to timeline) — expanded Malayalam
+  // ═══════════════════════════════════════════════════════════════════════
+  if (/fever|cough|pain|headache|vomit|diarr|rash|breathing|dizz|nausea|tired|weak|swelling|itching|burning|cold|sore|cramp|stiff|numb|bleed|പനി|ചുമ|വേദന|ഛർദ്ദി|തലവേദന|ശ്വാസം|ക്ഷീണം|നീർക്കെട്ട്|ചൊറിച്ചിൽ|വയറുവേദന|നെഞ്ചുവേദന|കാൽവേദന|മുതുകുവേദന|തലചുറ്റൽ|ഓക്കാനം|വിറയൽ|ജലദോഷം|തൊണ്ടവേദന|ശരീരവേദന|ഉറക്കമില്ല|വിശപ്പില്ല|ക്ഷീണം|ബലഹീനത/i.test(input)) {
     return { type: 'symptom_report', symptoms: input };
   }
 
-  // ── Default ──
+  // ═══════════════════════════════════════════════════════════════════════
+  // DEFAULT: General chat — let LLM handle naturally
+  // ═══════════════════════════════════════════════════════════════════════
   return { type: 'general_chat', text: input };
 }
 
@@ -301,8 +421,22 @@ function extractMedication(input: string, medName: string): MedicationData {
   };
 }
 
-export function generateTTSMessage(medName: string, dosage: string): string {
-  return `${medName} ${dosage} കഴിക്കാൻ സമയമായി. മറക്കരുത്.`;
+export function generateTTSMessage(medName: string, dosage: string, notes?: string): string {
+  let message = `${medName} ${dosage} കഴിക്കാൻ സമയമായി.`;
+
+  // Add food instructions if available
+  if (notes) {
+    if (/after\s*food|ഭക്ഷണത്തിന്\s*ശേഷം/i.test(notes)) {
+      message += ' ഭക്ഷണം കഴിച്ചതിന് ശേഷം കഴിക്കുക.';
+    } else if (/before\s*food|ഭക്ഷണത്തിന്\s*മുമ്പ്|empty/i.test(notes)) {
+      message += ' ഭക്ഷണത്തിന് മുമ്പ് കഴിക്കുക.';
+    } else if (notes.trim()) {
+      message += ` ${notes}.`;
+    }
+  }
+
+  message += ' മറക്കരുത്.';
+  return message;
 }
 
 export function getVitalAlert(type: string, primary: number, secondary: number): string | null {
