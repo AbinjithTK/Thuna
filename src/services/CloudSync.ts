@@ -83,18 +83,12 @@ export async function isOnline(): Promise<boolean> {
 // ============================================================================
 
 export async function getSyncConfig(): Promise<SyncConfig | null> {
-  try {
-    const apiKey = await AsyncStorage.getItem(STORAGE_KEYS.NOSCE_API_KEY);
-    const serverUrl = await AsyncStorage.getItem(STORAGE_KEYS.NOSCE_SERVER_URL);
-    if (!apiKey) return null;
-    return {
-      apiKey,
-      serverUrl: serverUrl || DEFAULT_SERVER,
-      patientId: '', // Resolved by server from API key
-    };
-  } catch {
-    return null;
-  }
+  // Use public HAPI FHIR server — no API key needed for demo
+  return {
+    apiKey: '',
+    serverUrl: 'http://hapi.fhir.org/baseR4',
+    patientId: '',
+  };
 }
 
 export async function setSyncConfig(apiKey: string, serverUrl?: string): Promise<void> {
@@ -113,10 +107,10 @@ export async function clearSyncConfig(): Promise<void> {
 
 async function pushToFHIR(config: SyncConfig, patientId: string): Promise<SyncResult['pushed']> {
   const pushed = { vitals: 0, medications: 0, conditions: 0, labs: 0 };
-  const headers = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/fhir+json',
-    'Authorization': `Bearer ${config.apiKey}`,
   };
+  if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
   const baseUrl = config.serverUrl;
 
   // Push unsynced vitals as FHIR Observations

@@ -9,17 +9,7 @@ import { useUser } from '../context/UserContext';
 import { database, Reminder } from '../db';
 import { Q } from '@nozbe/watermelondb';
 import Tts from 'react-native-tts';
-
-// Notifee may not be available — safe import
-let notifee: any = null;
-let TriggerType: any = {};
-let RepeatFrequency: any = {};
-try {
-  const n = require('@notifee/react-native');
-  notifee = n.default;
-  TriggerType = n.TriggerType;
-  RepeatFrequency = n.RepeatFrequency;
-} catch {}
+import notifee, { TriggerType, RepeatFrequency } from '@notifee/react-native';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -51,7 +41,6 @@ const TYPES = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function scheduleNotification(reminder: ReminderItem) {
-  if (!notifee) return; // Notifee not available
   try {
     const channelId = await notifee.createChannel({
       id: 'thuna-reminders',
@@ -89,7 +78,6 @@ async function scheduleNotification(reminder: ReminderItem) {
 }
 
 async function cancelNotification(reminderId: string, times: string[]) {
-  if (!notifee) return;
   try {
     for (const timeStr of times) {
       await notifee.cancelNotification(`${reminderId}_${timeStr}`);
@@ -357,25 +345,32 @@ export default function RemindersScreen() {
             <Text style={st.label}>Dosage / Details</Text>
             <TextInput style={st.input} placeholder="e.g. 500mg (optional)" value={fDesc} onChangeText={setFDesc} />
 
-            {/* Times */}
-            <Text style={st.label}>Times</Text>
+            {/* Times — tap to select */}
+            <Text style={st.label}>സമയം തിരഞ്ഞെടുക്കുക</Text>
             <View style={st.timesWrap}>
               {fTimes.map(t => (
-                <View key={t} style={st.timeTag}>
-                  <Text style={st.timeTagText}>{t}</Text>
+                <View key={t} style={st.timeTagActive}>
+                  <Text style={st.timeTagTextWhite}>{t}</Text>
                   <TouchableOpacity onPress={() => removeTime(t)}><Text style={st.timeTagX}>✕</Text></TouchableOpacity>
                 </View>
               ))}
             </View>
-            <View style={st.addTimeRow}>
-              <TextInput style={st.timeInput} placeholder="HH:MM (e.g. 14:30)" value={fNewTime} onChangeText={setFNewTime} keyboardType="numbers-and-punctuation" />
-              <TouchableOpacity style={st.addTimeBtn} onPress={addTime}><Text style={st.addTimeBtnText}>Add</Text></TouchableOpacity>
+            {/* Simple time grid — tap to add */}
+            <View style={st.timeGrid}>
+              {['06:00','07:00','08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00','19:00','20:00','21:00','22:00','23:00'].map(t => (
+                <TouchableOpacity key={t} style={[st.timeGridBtn, fTimes.includes(t) && st.timeGridBtnActive]} onPress={() => {
+                  if (fTimes.includes(t)) removeTime(t);
+                  else setFTimes([...fTimes, t].sort());
+                }}>
+                  <Text style={[st.timeGridBtnText, fTimes.includes(t) && st.timeGridBtnTextActive]}>{t}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
 
             {/* TTS Message */}
-            <Text style={st.label}>Voice Message (Malayalam)</Text>
-            <TextInput style={st.input} placeholder="Auto-generated if empty" value={fTTS} onChangeText={setFTTS} />
-            {fTTS ? <TouchableOpacity onPress={() => playTTS(fTTS)} style={st.previewBtn}><Text style={st.previewText}>▶ Preview</Text></TouchableOpacity> : null}
+            <Text style={st.label}>ശബ്ദ സന്ദേശം (Malayalam)</Text>
+            <TextInput style={st.input} placeholder="ഓട്ടോ — ടൈപ്പ് ചെയ്യേണ്ട" value={fTTS} onChangeText={setFTTS} />
+            {fTTS ? <TouchableOpacity onPress={() => playTTS(fTTS)} style={st.previewBtn}><Text style={st.previewText}>▶ കേൾക്കുക</Text></TouchableOpacity> : null}
 
             {/* Save */}
             <TouchableOpacity style={[st.saveBtn, !fTitle.trim() && st.saveBtnOff]} onPress={handleSave} disabled={!fTitle.trim()}>
@@ -464,14 +459,15 @@ const st = StyleSheet.create({
   typeItem: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, borderWidth: 1.5, borderColor: '#E5E7EB' },
   typeItemIcon: { fontSize: 16 },
   typeItemLabel: { fontSize: 13, fontWeight: '500', color: '#6B7280' },
-  timesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  timeTag: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#F0FDF4', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 },
-  timeTagText: { fontSize: 15, fontWeight: '600', color: '#0D7C66' },
-  timeTagX: { fontSize: 14, color: '#6B7280' },
-  addTimeRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
-  timeInput: { flex: 1, height: 44, borderWidth: 1.5, borderColor: '#E5E7EB', borderRadius: 12, paddingHorizontal: 14, fontSize: 15, color: '#111827' },
-  addTimeBtn: { paddingHorizontal: 18, height: 44, borderRadius: 12, backgroundColor: '#0D7C66', alignItems: 'center', justifyContent: 'center' },
-  addTimeBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  timesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  timeTagActive: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#0D7C66', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 },
+  timeTagTextWhite: { fontSize: 15, fontWeight: '600', color: '#fff' },
+  timeTagX: { fontSize: 14, color: '#fff' },
+  timeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  timeGridBtn: { width: 70, height: 44, borderRadius: 12, borderWidth: 1.5, borderColor: '#E5E7EB', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FAFBFC' },
+  timeGridBtnActive: { backgroundColor: '#0D7C66', borderColor: '#0D7C66' },
+  timeGridBtnText: { fontSize: 15, fontWeight: '600', color: '#374151' },
+  timeGridBtnTextActive: { color: '#fff' },
   previewBtn: { marginTop: 8, alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: '#F0FDF4' },
   previewText: { fontSize: 13, color: '#0D7C66', fontWeight: '500' },
   saveBtn: { marginTop: 28, height: 56, borderRadius: 28, backgroundColor: '#0D7C66', alignItems: 'center', justifyContent: 'center' },

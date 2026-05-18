@@ -265,9 +265,20 @@ export function parseIntent(input: string): Intent {
     const timeMatch = input.match(/(\d{1,2}):(\d{2})\s*(am|pm|AM|PM)?/);
     const hourMatch = input.match(/(\d{1,2})\s*(am|pm|AM|PM|മണി|o'clock)/i);
     const plainNumMatch = input.match(/at\s*(\d{1,2})/i);
+    const relativeMatch = input.match(/in\s*(\d+)\s*(min|minute|hour|hr|മിനിറ്റ്|മണിക്കൂർ)/i);
     let times = ['08:00'];
 
-    if (timeMatch) {
+    if (relativeMatch) {
+      // "in 5 minutes", "in 1 hour" — calculate from now
+      const now = new Date();
+      const amount = parseInt(relativeMatch[1]);
+      if (/hour|hr|മണിക്കൂർ/i.test(relativeMatch[2])) {
+        now.setHours(now.getHours() + amount);
+      } else {
+        now.setMinutes(now.getMinutes() + amount);
+      }
+      times = [`${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`];
+    } else if (timeMatch) {
       let h = parseInt(timeMatch[1]);
       const m = parseInt(timeMatch[2]);
       if (timeMatch[3] && /pm/i.test(timeMatch[3]) && h < 12) h += 12;
@@ -286,6 +297,12 @@ export function parseIntent(input: string): Intent {
     else if (/evening|വൈകുന്നേരം/i.test(input)) { times = ['18:00']; }
     else if (/night|രാത്രി/i.test(input)) { times = ['21:00']; }
     else if (/afternoon|ഉച്ച/i.test(input)) { times = ['14:00']; }
+    else {
+      // No time specified — default to 1 hour from now
+      const now = new Date();
+      now.setHours(now.getHours() + 1);
+      times = [`${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`];
+    }
 
     // Extract title — remove all the trigger words, keep the actual task
     let title = input

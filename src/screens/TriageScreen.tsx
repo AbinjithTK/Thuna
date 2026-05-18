@@ -38,6 +38,45 @@ export default function TriageScreen() {
   const [textInput, setTextInput] = useState('');
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  const lastReminderCheck = useRef('');
+
+  // In-app reminder checker — speaks TTS when a reminder time matches current time
+  useEffect(() => {
+    const checkReminders = async () => {
+      const now = new Date();
+      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      if (currentTime === lastReminderCheck.current) return; // Already checked this minute
+      lastReminderCheck.current = currentTime;
+
+      try {
+        const { database, Reminder } = require('../db');
+        const { Q } = require('@nozbe/watermelondb');
+        const reminders = await database.get('reminders').query(Q.where('is_active', true)).fetch();
+
+        for (const rem of reminders) {
+          let times: string[] = [];
+          try { times = JSON.parse(rem.timeSlots); } catch { continue; }
+          if (times.includes(currentTime)) {
+            // This reminder is due NOW — speak it and show in chat
+            const msg = rem.ttsMessage || `${rem.medication} — സമയമായി`;
+            Tts.setDefaultLanguage('ml-IN');
+            Tts.setDefaultRate(0.55);
+            Tts.speak(msg);
+            setMessages(prev => [...prev, {
+              id: `rem_${Date.now()}`,
+              text: `⏰ ${msg}`,
+              isUser: false,
+              timestamp: Date.now(),
+            }]);
+          }
+        }
+      } catch {}
+    };
+
+    const interval = setInterval(checkReminders, 30000); // Check every 30 seconds
+    checkReminders(); // Check immediately
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (_setOnVoiceResult) {
